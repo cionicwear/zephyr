@@ -150,9 +150,10 @@
 	compatible = "nordic,nrf-uarte";
 	status = "okay";
 	current-speed = <115200>;
-	pinctrl-0 = <&uart0_default>;
-	pinctrl-1 = <&uart0_sleep>;
-	pinctrl-names = "default", "sleep";
+	tx-pin = <7>;
+	rx-pin = <32>;
+	rts-pin = <11>;
+	cts-pin = <41>;
 };
 
 arduino_serial: &uart1 {

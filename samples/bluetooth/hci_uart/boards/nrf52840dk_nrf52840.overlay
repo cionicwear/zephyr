@@ -5,4 +5,8 @@
 	current-speed = <1000000>;
 	status = "okay";
 	hw-flow-control;
+	tx-pin = <7>;
+	rx-pin = <32>;
+	rts-pin = <11>;
+	cts-pin = <41>;
 };
