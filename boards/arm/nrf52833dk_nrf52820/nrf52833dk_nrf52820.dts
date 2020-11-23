@@ -105,10 +105,19 @@
 &uart0 {
 	compatible = "nordic,nrf-uarte";
 	status = "okay";
+<<<<<<< HEAD
 	current-speed = <115200>;
 	pinctrl-0 = <&uart0_default>;
 	pinctrl-1 = <&uart0_sleep>;
 	pinctrl-names = "default", "sleep";
+=======
+	hw-flow-control;
+	current-speed = <1000000>;
+	tx-pin = <4>;
+	rx-pin = <5>;
+	rts-pin = <6>;
+	cts-pin = <7>;
+>>>>>>> 82b75531a2 (Update board def to match es1 board (hack))
 };
 
 &i2c0 {
