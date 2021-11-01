@@ -1,0 +1,45 @@
+
+name: Zephyr build test
+on: push
+
+jobs:
+  node-docker:
+    runs-on: ubuntu-latest
+    container:
+      image: mynewt/newt:1.9.0-6
+    steps:
+      - run: echo "Running ${{ github.repository }}"
+      - name: Force Install GIT latest
+        run: |
+          sudo apt-get update -y && apt-get upgrade -y \
+          && sudo apt-get install -y software-properties-common \
+          && sudo add-apt-repository ppa:git-core/ppa -y \
+          && sudo apt-get update -y && sudo apt-get upgrade -y \
+          && sudo apt-get install git -y \
+          && sudo apt-get install git-lfs
+        # Checkout and build baremetal
+      - name: Checkout Zephyr repo
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          ref: fabien/ci
+      - name: Update GNU Arm Embedded Toolchain to 10.3-2021.10
+        run: |
+          sudo apt-get install wget -y \
+          && wget https://developer.arm.com/-/media/Files/downloads/gnu-rm/10.3-2021.10/gcc-arm-none-eabi-10.3-2021.10-x86_64-linux.tar.bz2 \
+          && sudo tar xjf gcc-arm-none-eabi-10.3-2021.10-x86_64-linux.tar.bz2 -C /usr/share/ \
+          && sudo ln -f -s /usr/share/gcc-arm-none-eabi-10.3-2021.10/bin/* /usr/bin/
+
+      # Build BLE image?
+      - name: Prep Zephyr BLE environment
+        run: |
+          chmod x zephyr_build.sh \
+          && ./zephyr_build.sh
+      -name: Building Zephyr HCI sample
+        run: |
+        cd samples/bluetooth/hci_uart/ \
+        && ls -la \
+        && west build --board=nrf52833dk_nrf52820 \
+        && west sign -t imgtool -- -v "0.24.2"
+
+
