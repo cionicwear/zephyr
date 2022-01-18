@@ -21,6 +21,8 @@ manifest:
   remotes:
     - name: upstream
       url-base: https://github.com/zephyrproject-rtos
+    - name: upstream_cionic
+      url-base: https://github.com/cionicwear
 
   #
   # Please add items below based on alphabetical order
@@ -83,7 +85,8 @@ manifest:
       groups:
         - hal
     - name: hal_nordic
-      revision: 249199ec5a5c31d170659921048764e96d05cc0e
+      remote: upstream_cionic
+      revision: cionic-stable
       path: modules/hal/nordic
       groups:
         - hal
