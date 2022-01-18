@@ -25,7 +25,7 @@ extern "C" {
  */
 
 /** PPP maximum receive unit (MRU) */
-#define PPP_MRU 1500
+#define PPP_MRU CONFIG_NET_PPP_MTU_MRU
 
 /** PPP maximum transfer unit (MTU) */
 #define PPP_MTU PPP_MRU
@@ -45,20 +45,20 @@ struct ppp_api {
 	struct net_if_api iface_api;
 
 	/** Start the device */
-	int (*start)(struct device *dev);
+	int (*start)(const struct device *dev);
 
 	/** Stop the device */
-	int (*stop)(struct device *dev);
+	int (*stop)(const struct device *dev);
 
 	/** Send a network packet */
-	int (*send)(struct device *dev, struct net_pkt *pkt);
+	int (*send)(const struct device *dev, struct net_pkt *pkt);
 
 #if defined(CONFIG_NET_STATISTICS_PPP)
 	/** Collect optional PPP specific statistics. This pointer
 	 * should be set by driver if statistics needs to be collected
 	 * for that driver.
 	 */
-	struct net_stats_ppp *(*get_stats)(struct device *dev);
+	struct net_stats_ppp *(*get_stats)(const struct device *dev);
 #endif
 };
 
@@ -80,6 +80,9 @@ enum ppp_protocol_type {
 	PPP_IPV6CP = 0x8057, /**< RFC 5072 */
 	PPP_CCP    = 0x80FD, /**< RFC 1962 */
 	PPP_LCP    = 0xc021, /**< RFC 1661 */
+	PPP_PAP    = 0xc023, /**< RFC 1334 */
+	PPP_CHAP   = 0xc223, /**< RFC 1334 */
+	PPP_EAP    = 0xc227, /**< RFC 2284 */
 };
 
 /**
@@ -212,12 +215,15 @@ enum ipv6cp_option_type {
 typedef void (*net_ppp_lcp_echo_reply_cb_t)(void *user_data,
 					    size_t user_data_len);
 
+struct ppp_my_option_data;
+struct ppp_my_option_info;
+
 /**
  * Generic PPP Finite State Machine
  */
 struct ppp_fsm {
 	/** Timeout timer */
-	struct k_delayed_work timer;
+	struct k_work_delayable timer;
 
 	struct {
 		/** Acknowledge Configuration Information */
@@ -226,7 +232,7 @@ struct ppp_fsm {
 				       uint16_t length);
 
 		/** Add Configuration Information */
-		struct net_buf *(*config_info_add)(struct ppp_fsm *fsm);
+		struct net_pkt *(*config_info_add)(struct ppp_fsm *fsm);
 
 		/** Length of Configuration Information */
 		int  (*config_info_len)(struct ppp_fsm *fsm);
@@ -241,7 +247,7 @@ struct ppp_fsm {
 		int (*config_info_req)(struct ppp_fsm *fsm,
 				       struct net_pkt *pkt,
 				       uint16_t length,
-				       struct net_buf **buf);
+				       struct net_pkt *ret_pkt);
 
 		/** Reject Configuration Information */
 		int (*config_info_rej)(struct ppp_fsm *fsm,
@@ -278,6 +284,17 @@ struct ppp_fsm {
 						    struct net_pkt *pkt);
 	} cb;
 
+	struct {
+		/** Options information */
+		const struct ppp_my_option_info *info;
+
+		/** Options negotiation data */
+		struct ppp_my_option_data *data;
+
+		/** Number of negotiated options */
+		size_t count;
+	} my_options;
+
 	/** Option bits */
 	uint32_t flags;
 
@@ -312,20 +329,11 @@ struct ppp_fsm {
 	uint8_t ack_received : 1;
 };
 
-/** PPP configuration options */
-struct ppp_option_pkt {
-	/** Option value */
-	struct net_pkt_cursor value;
+#define PPP_MY_OPTION_ACKED	BIT(0)
+#define PPP_MY_OPTION_REJECTED	BIT(1)
 
-	/** Option type */
-	union {
-		enum lcp_option_type lcp;
-		enum ipcp_option_type ipcp;
-		enum ipv6cp_option_type ipv6cp;
-	} type;
-
-	/** Option length */
-	uint8_t len;
+struct ppp_my_option_data {
+	uint32_t flags;
 };
 
 struct lcp_options {
@@ -338,23 +346,13 @@ struct lcp_options {
 	/** Maximum Receive Unit value */
 	uint16_t mru;
 
-	/* Flags what to negotiate */
-
-	/** Negotiate MRU */
-	uint16_t negotiate_mru : 1;
-
-	/** Negotiate */
-	uint16_t negotiate_async_map :1;
-
-	/** Negotiate HDLC protocol field compression*/
-	uint16_t negotiate_proto_compression :1;
-
-	/** Negotiate HDLC address/control field compression */
-	uint16_t negotiate_addr_compression :1;
-
-	/** Negotiate magic number */
-	uint16_t negotiate_magic :1;
+	/** Which authentication protocol was negotiated (0 means none) */
+	uint16_t auth_proto;
 };
+
+#if defined(CONFIG_NET_L2_PPP_OPTION_MRU)
+#define LCP_NUM_MY_OPTIONS	1
+#endif
 
 struct ipcp_options {
 	/** IPv4 address */
@@ -363,28 +361,36 @@ struct ipcp_options {
 	struct in_addr dns2_address;
 };
 
+#define IPCP_NUM_MY_OPTIONS	3
+
 struct ipv6cp_options {
 	/** Interface identifier */
 	uint8_t iid[PPP_INTERFACE_IDENTIFIER_LEN];
 };
 
+#define IPV6CP_NUM_MY_OPTIONS	1
+
+enum ppp_flags {
+	PPP_CARRIER_UP,
+};
+
 /** PPP L2 context specific to certain network interface */
 struct ppp_context {
+	/** Flags representing PPP state, which are accessed from multiple
+	 * threads.
+	 */
+	atomic_t flags;
+
 	/** PPP startup worker. */
-	struct k_delayed_work startup;
+	struct k_work_delayable startup;
 
-	struct {
-		/** Carrier ON/OFF handler worker. This is used to create
-		 * network interface UP/DOWN event when PPP L2 driver
-		 * notices carrier ON/OFF situation. We must not create another
-		 * network management event from inside management handler thus
-		 * we use worker thread to trigger the UP/DOWN event.
-		 */
-		struct k_work work;
-
-		/** Is the carrier enabled already */
-		bool enabled;
-	} carrier_mgmt;
+	/** Carrier ON/OFF handler worker. This is used to create
+	 * network interface UP/DOWN event when PPP L2 driver
+	 * notices carrier ON/OFF situation. We must not create another
+	 * network management event from inside management handler thus
+	 * we use worker thread to trigger the UP/DOWN event.
+	 */
+	struct k_work carrier_work;
 
 	struct {
 		/** Finite state machine for LCP */
@@ -396,14 +402,11 @@ struct ppp_context {
 		/** Options that peer want to request */
 		struct lcp_options peer_options;
 
-		/** Options that we accepted */
-		struct lcp_options my_accepted;
-
-		/** Options that peer accepted */
-		struct lcp_options peer_accepted;
-
 		/** Magic-Number value */
 		uint32_t magic;
+#if defined(CONFIG_NET_L2_PPP_OPTION_MRU)
+		struct ppp_my_option_data my_options_data[LCP_NUM_MY_OPTIONS];
+#endif
 	} lcp;
 
 #if defined(CONFIG_NET_IPV4)
@@ -417,11 +420,8 @@ struct ppp_context {
 		/** Options that peer want to request */
 		struct ipcp_options peer_options;
 
-		/** Options that we accepted */
-		struct ipcp_options my_accepted;
-
-		/** Options that peer accepted */
-		struct ipcp_options peer_accepted;
+		/** My options runtime data */
+		struct ppp_my_option_data my_options_data[IPCP_NUM_MY_OPTIONS];
 	} ipcp;
 #endif
 
@@ -436,12 +436,16 @@ struct ppp_context {
 		/** Options that peer want to request */
 		struct ipv6cp_options peer_options;
 
-		/** Options that we accepted */
-		struct ipv6cp_options my_accepted;
-
-		/** Options that peer accepted */
-		struct ipv6cp_options peer_accepted;
+		/** My options runtime data */
+		struct ppp_my_option_data my_options_data[IPV6CP_NUM_MY_OPTIONS];
 	} ipv6cp;
+#endif
+
+#if defined(CONFIG_NET_L2_PPP_PAP)
+	struct {
+		/** Finite state machine for PAP */
+		struct ppp_fsm fsm;
+	} pap;
 #endif
 
 #if defined(CONFIG_NET_SHELL)
@@ -484,6 +488,9 @@ struct ppp_context {
 	/** This tells how many network protocols are up */
 	int network_protos_up;
 
+	/** Is network carrier up */
+	uint16_t is_net_carrier_up : 1;
+
 	/** Is PPP ready to receive packets */
 	uint16_t is_ready_to_serve : 1;
 
@@ -507,6 +514,12 @@ struct ppp_context {
 
 	/** IPV6CP open status (open / closed) */
 	uint16_t is_ipv6cp_open : 1;
+
+	/** PAP status (up / down) */
+	uint16_t is_pap_up : 1;
+
+	/** PAP open status (open / closed) */
+	uint16_t is_pap_open : 1;
 };
 
 /**
@@ -548,6 +561,8 @@ void net_ppp_init(struct net_if *iface);
 enum net_event_ppp_cmd {
 	NET_EVENT_PPP_CMD_CARRIER_ON = 1,
 	NET_EVENT_PPP_CMD_CARRIER_OFF,
+	NET_EVENT_PPP_CMD_PHASE_RUNNING,
+	NET_EVENT_PPP_CMD_PHASE_DEAD,
 };
 
 #define NET_EVENT_PPP_CARRIER_ON					\
@@ -555,6 +570,12 @@ enum net_event_ppp_cmd {
 
 #define NET_EVENT_PPP_CARRIER_OFF					\
 	(_NET_PPP_EVENT | NET_EVENT_PPP_CMD_CARRIER_OFF)
+
+#define NET_EVENT_PPP_PHASE_RUNNING					\
+	(_NET_PPP_EVENT | NET_EVENT_PPP_CMD_PHASE_RUNNING)
+
+#define NET_EVENT_PPP_PHASE_DEAD					\
+	(_NET_PPP_EVENT | NET_EVENT_PPP_CMD_PHASE_DEAD)
 
 struct net_if;
 
@@ -583,6 +604,34 @@ static inline void ppp_mgmt_raise_carrier_on_event(struct net_if *iface)
 void ppp_mgmt_raise_carrier_off_event(struct net_if *iface);
 #else
 static inline void ppp_mgmt_raise_carrier_off_event(struct net_if *iface)
+{
+	ARG_UNUSED(iface);
+}
+#endif
+
+/**
+ * @brief Raise PHASE_RUNNING event when PPP reaching RUNNING phase
+ *
+ * @param iface PPP network interface.
+ */
+#if defined(CONFIG_NET_L2_PPP_MGMT)
+void ppp_mgmt_raise_phase_running_event(struct net_if *iface);
+#else
+static inline void ppp_mgmt_raise_phase_running_event(struct net_if *iface)
+{
+	ARG_UNUSED(iface);
+}
+#endif
+
+/**
+ * @brief Raise PHASE_DEAD event when PPP reaching DEAD phase
+ *
+ * @param iface PPP network interface.
+ */
+#if defined(CONFIG_NET_L2_PPP_MGMT)
+void ppp_mgmt_raise_phase_dead_event(struct net_if *iface);
+#else
+static inline void ppp_mgmt_raise_phase_dead_event(struct net_if *iface)
 {
 	ARG_UNUSED(iface);
 }

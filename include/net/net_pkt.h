@@ -60,18 +60,11 @@ struct net_pkt_cursor {
  * net_pkt_clone() function.
  */
 struct net_pkt {
-	union {
-		/** Internal variable that is used when packet is sent
-		 * or received.
-		 */
-		struct k_work work;
-		/** Socket layer will queue received net_pkt into a k_fifo.
-		 * Since this happens after consuming net_pkt's k_work on
-		 * RX path, it is then fine to have both attributes sharing
-		 * the same memory area.
-		 */
-		intptr_t sock_recv_fifo;
-	};
+	/**
+	 * The fifo is used by RX/TX threads and by socket layer. The net_pkt
+	 * is queued via fifo to the processing thread.
+	 */
+	intptr_t fifo;
 
 	/** Slab pointer from where it belongs to */
 	struct k_mem_slab *slab;
@@ -97,30 +90,36 @@ struct net_pkt {
 	struct net_if *orig_iface; /* Original network interface */
 #endif
 
-	/* We do not support combination of TXTIME and TXTIME_STATS as the
-	 * same variable is shared in net_pkt.h
-	 */
-#if defined(CONFIG_NET_PKT_TXTIME) && defined(CONFIG_NET_PKT_TXTIME_STATS)
-#error \
-"Cannot define both CONFIG_NET_PKT_TXTIME and CONFIG_NET_PKT_TXTIME_STATS"
+#if defined(CONFIG_NET_PKT_TIMESTAMP)
+	/** Timestamp if available. */
+	struct net_ptp_time timestamp;
 #endif
 
-#if defined(CONFIG_NET_PKT_TIMESTAMP) || defined(CONFIG_NET_PKT_TXTIME) || \
-				defined(CONFIG_NET_PKT_RXTIME_STATS) || \
-				defined(CONFIG_NET_PKT_TXTIME_STATS)
-	union {
-#if defined(CONFIG_NET_PKT_TIMESTAMP) || \
-				defined(CONFIG_NET_PKT_RXTIME_STATS) ||	\
-				defined(CONFIG_NET_PKT_TXTIME_STATS)
-		/** Timestamp if available. */
-		struct net_ptp_time timestamp;
-#endif /* CONFIG_NET_PKT_TIMESTAMP */
-#if defined(CONFIG_NET_PKT_TXTIME)
-		/** Network packet TX time in the future (in nanoseconds) */
-		uint64_t txtime;
-#endif /* CONFIG_NET_PKT_TXTIME */
+#if defined(CONFIG_NET_PKT_RXTIME_STATS) || defined(CONFIG_NET_PKT_TXTIME_STATS)
+	struct {
+		/** Create time in cycles */
+		uint32_t create_time;
+
+#if defined(CONFIG_NET_PKT_TXTIME_STATS_DETAIL) || \
+	defined(CONFIG_NET_PKT_RXTIME_STATS_DETAIL)
+		/** Collect extra statistics for net_pkt processing
+		 * from various points in the IP stack. See networking
+		 * documentation where these points are located and how
+		 * to interpret the results.
+		 */
+		struct {
+			uint32_t stat[NET_PKT_DETAIL_STATS_COUNT];
+			int count;
+		} detail;
+#endif /* CONFIG_NET_PKT_TXTIME_STATS_DETAIL ||
+	  CONFIG_NET_PKT_RXTIME_STATS_DETAIL */
 	};
-#endif /* CONFIG_NET_PKT_TIMESTAMP || CONFIG_NET_PKT_TXTIME */
+#endif /* CONFIG_NET_PKT_RXTIME_STATS || CONFIG_NET_PKT_TXTIME_STATS */
+
+#if defined(CONFIG_NET_PKT_TXTIME)
+	/** Network packet TX time in the future (in nanoseconds) */
+	uint64_t txtime;
+#endif /* CONFIG_NET_PKT_TXTIME */
 
 	/** Reference counter */
 	atomic_t atomic_ref;
@@ -129,13 +128,9 @@ struct net_pkt {
 	struct net_linkaddr lladdr_src;
 	struct net_linkaddr lladdr_dst;
 
-#if defined(CONFIG_NET_TCP1) || defined(CONFIG_NET_TCP2)
-	union {
-		sys_snode_t sent_list;
-
-		/** Allow placing the packet into sys_slist_t */
-		sys_snode_t next;
-	};
+#if defined(CONFIG_NET_TCP2)
+	/** Allow placing the packet into sys_slist_t */
+	sys_snode_t next;
 #endif
 
 	uint8_t ip_hdr_len;	/* pre-filled in order to avoid func call */
@@ -181,10 +176,21 @@ struct net_pkt {
 	};
 
 #if defined(CONFIG_NET_TCP)
-	uint8_t tcp_first_msg     : 1; /* Is this the first time this pkt is sent,
-				     * or is this a resend of a TCP segment.
-				     */
+	uint8_t tcp_first_msg     : 1; /* Is this the first time this pkt is
+					* sent, or is this a resend of a TCP
+					* segment.
+					*/
 #endif
+
+	uint8_t captured : 1; /* Set to 1 if this packet is already being
+			       * captured
+			       */
+
+	uint8_t l2_bridged : 1; /* set to 1 if this packet comes from a bridge
+				 * and already contains its L2 header to be
+				 * preserved. Useful only if
+				 * defined(CONFIG_NET_ETHERNET_BRIDGE).
+				 */
 
 	union {
 		/* IPv6 hop limit or IPv4 ttl for this network packet.
@@ -203,12 +209,10 @@ struct net_pkt {
 #endif
 	};
 
-#if NET_TC_COUNT > 1
 	/** Network packet priority, can be left out in which case packet
 	 * is not prioritised.
 	 */
 	uint8_t priority;
-#endif
 
 #if defined(CONFIG_NET_VLAN)
 	/* VLAN TCI (Tag Control Information). This contains the Priority
@@ -228,7 +232,7 @@ struct net_pkt {
 	uint16_t ipv6_prev_hdr_start;
 
 #if defined(CONFIG_NET_IPV6_FRAGMENT)
-	uint16_t ipv6_fragment_offset;	/* Fragment offset of this packet */
+	uint16_t ipv6_fragment_flags;	/* Fragment offset and M (More Fragment) flag */
 	uint32_t ipv6_fragment_id;	/* Fragment id */
 	uint16_t ipv6_frag_hdr_start;	/* Where starts the fragment header */
 #endif /* CONFIG_NET_IPV6_FRAGMENT */
@@ -240,7 +244,23 @@ struct net_pkt {
 #if defined(CONFIG_IEEE802154)
 	uint8_t ieee802154_rssi; /* Received Signal Strength Indication */
 	uint8_t ieee802154_lqi;  /* Link Quality Indicator */
+	uint8_t ieee802154_arb : 1; /* ACK Request Bit is set in the frame */
 	uint8_t ieee802154_ack_fpb : 1; /* Frame Pending Bit was set in the ACK */
+	uint8_t ieee802154_frame_secured : 1; /* Frame is authenticated and
+					       * encrypted according to its
+					       * Auxiliary Security Header
+					       */
+	uint8_t ieee802154_mac_hdr_rdy : 1; /* Indicates if frame's MAC header
+					     * is ready to be transmitted or if
+					     * it requires further modifications,
+					     * e.g. Frame Counter injection.
+					     */
+#if defined(CONFIG_IEEE802154_2015)
+	uint8_t ieee802154_fv2015 : 1; /* Frame version is IEEE 802.15.4-2015 */
+	uint8_t ieee802154_ack_seb : 1; /* Security Enabled Bit was set in the ACK */
+	uint32_t ieee802154_ack_fc; /* Frame counter set in the ACK */
+	uint8_t ieee802154_ack_keyid; /* Key index set in the ACK */
+#endif
 #endif
 #if defined(CONFIG_NET_L2_CANBUS)
 	union {
@@ -252,11 +272,6 @@ struct net_pkt {
 };
 
 /** @cond ignore */
-
-static inline struct k_work *net_pkt_work(struct net_pkt *pkt)
-{
-	return &pkt->work;
-}
 
 /* The interface real ll address */
 static inline struct net_linkaddr *net_pkt_lladdr_if(struct net_pkt *pkt)
@@ -329,6 +344,28 @@ static inline bool net_pkt_is_gptp(struct net_pkt *pkt)
 static inline void net_pkt_set_gptp(struct net_pkt *pkt, bool is_gptp)
 {
 	pkt->gptp_pkt = is_gptp;
+}
+
+static inline bool net_pkt_is_captured(struct net_pkt *pkt)
+{
+	return !!(pkt->captured);
+}
+
+static inline void net_pkt_set_captured(struct net_pkt *pkt, bool is_captured)
+{
+	pkt->captured = is_captured;
+}
+
+static inline bool net_pkt_is_l2_bridged(struct net_pkt *pkt)
+{
+	return IS_ENABLED(CONFIG_NET_ETHERNET_BRIDGE) ? !!(pkt->l2_bridged) : 0;
+}
+
+static inline void net_pkt_set_l2_bridged(struct net_pkt *pkt, bool is_l2_bridged)
+{
+	if (IS_ENABLED(CONFIG_NET_ETHERNET_BRIDGE)) {
+		pkt->l2_bridged = is_l2_bridged;
+	}
 }
 
 static inline uint8_t net_pkt_ip_hdr_len(struct net_pkt *pkt)
@@ -477,7 +514,8 @@ static inline uint8_t net_pkt_ipv6_next_hdr(struct net_pkt *pkt)
 	return pkt->ipv6_next_hdr;
 }
 
-static inline void net_pkt_set_ipv6_next_hdr(struct net_pkt *pkt, uint8_t next_hdr)
+static inline void net_pkt_set_ipv6_next_hdr(struct net_pkt *pkt,
+					     uint8_t next_hdr)
 {
 	pkt->ipv6_next_hdr = next_hdr;
 }
@@ -535,7 +573,8 @@ static inline uint8_t net_pkt_ipv6_next_hdr(struct net_pkt *pkt)
 	return 0;
 }
 
-static inline void net_pkt_set_ipv6_next_hdr(struct net_pkt *pkt, uint8_t next_hdr)
+static inline void net_pkt_set_ipv6_next_hdr(struct net_pkt *pkt,
+					     uint8_t next_hdr)
 {
 	ARG_UNUSED(pkt);
 	ARG_UNUSED(next_hdr);
@@ -610,13 +649,17 @@ static inline void net_pkt_set_ipv6_fragment_start(struct net_pkt *pkt,
 
 static inline uint16_t net_pkt_ipv6_fragment_offset(struct net_pkt *pkt)
 {
-	return pkt->ipv6_fragment_offset;
+	return pkt->ipv6_fragment_flags & NET_IPV6_FRAGH_OFFSET_MASK;
+}
+static inline bool net_pkt_ipv6_fragment_more(struct net_pkt *pkt)
+{
+	return (pkt->ipv6_fragment_flags & 0x01) != 0;
 }
 
-static inline void net_pkt_set_ipv6_fragment_offset(struct net_pkt *pkt,
-						    uint16_t offset)
+static inline void net_pkt_set_ipv6_fragment_flags(struct net_pkt *pkt,
+						   uint16_t flags)
 {
-	pkt->ipv6_fragment_offset = offset;
+	pkt->ipv6_fragment_flags = flags;
 }
 
 static inline uint32_t net_pkt_ipv6_fragment_id(struct net_pkt *pkt)
@@ -651,11 +694,18 @@ static inline uint16_t net_pkt_ipv6_fragment_offset(struct net_pkt *pkt)
 	return 0;
 }
 
-static inline void net_pkt_set_ipv6_fragment_offset(struct net_pkt *pkt,
-						    uint16_t offset)
+static inline bool net_pkt_ipv6_fragment_more(struct net_pkt *pkt)
 {
 	ARG_UNUSED(pkt);
-	ARG_UNUSED(offset);
+
+	return 0;
+}
+
+static inline void net_pkt_set_ipv6_fragment_flags(struct net_pkt *pkt,
+						   uint16_t flags)
+{
+	ARG_UNUSED(pkt);
+	ARG_UNUSED(flags);
 }
 
 static inline uint32_t net_pkt_ipv6_fragment_id(struct net_pkt *pkt)
@@ -673,7 +723,6 @@ static inline void net_pkt_set_ipv6_fragment_id(struct net_pkt *pkt,
 }
 #endif /* CONFIG_NET_IPV6_FRAGMENT */
 
-#if NET_TC_COUNT > 1
 static inline uint8_t net_pkt_priority(struct net_pkt *pkt)
 {
 	return pkt->priority;
@@ -684,15 +733,6 @@ static inline void net_pkt_set_priority(struct net_pkt *pkt,
 {
 	pkt->priority = priority;
 }
-#else /* NET_TC_COUNT == 1 */
-static inline uint8_t net_pkt_priority(struct net_pkt *pkt)
-{
-	return 0;
-}
-
-#define net_pkt_set_priority(...)
-
-#endif /* NET_TC_COUNT > 1 */
 
 #if defined(CONFIG_NET_VLAN)
 static inline uint16_t net_pkt_vlan_tag(struct net_pkt *pkt)
@@ -804,6 +844,33 @@ static inline void net_pkt_set_timestamp(struct net_pkt *pkt,
 }
 #endif /* CONFIG_NET_PKT_TIMESTAMP */
 
+#if defined(CONFIG_NET_PKT_RXTIME_STATS) || defined(CONFIG_NET_PKT_TXTIME_STATS)
+static inline uint32_t net_pkt_create_time(struct net_pkt *pkt)
+{
+	return pkt->create_time;
+}
+
+static inline void net_pkt_set_create_time(struct net_pkt *pkt,
+					   uint32_t create_time)
+{
+	pkt->create_time = create_time;
+}
+#else
+static inline uint32_t net_pkt_create_time(struct net_pkt *pkt)
+{
+	ARG_UNUSED(pkt);
+
+	return 0U;
+}
+
+static inline void net_pkt_set_create_time(struct net_pkt *pkt,
+					   uint32_t create_time)
+{
+	ARG_UNUSED(pkt);
+	ARG_UNUSED(create_time);
+}
+#endif /* CONFIG_NET_PKT_RXTIME_STATS || CONFIG_NET_PKT_TXTIME_STATS */
+
 #if defined(CONFIG_NET_PKT_TXTIME)
 static inline uint64_t net_pkt_txtime(struct net_pkt *pkt)
 {
@@ -829,6 +896,68 @@ static inline void net_pkt_set_txtime(struct net_pkt *pkt, uint64_t txtime)
 }
 #endif /* CONFIG_NET_PKT_TXTIME */
 
+#if defined(CONFIG_NET_PKT_TXTIME_STATS_DETAIL) || \
+	defined(CONFIG_NET_PKT_RXTIME_STATS_DETAIL)
+static inline uint32_t *net_pkt_stats_tick(struct net_pkt *pkt)
+{
+	return pkt->detail.stat;
+}
+
+static inline int net_pkt_stats_tick_count(struct net_pkt *pkt)
+{
+	return pkt->detail.count;
+}
+
+static inline void net_pkt_stats_tick_reset(struct net_pkt *pkt)
+{
+	memset(&pkt->detail, 0, sizeof(pkt->detail));
+}
+
+static ALWAYS_INLINE void net_pkt_set_stats_tick(struct net_pkt *pkt,
+						 uint32_t tick)
+{
+	if (pkt->detail.count >= NET_PKT_DETAIL_STATS_COUNT) {
+		NET_ERR("Detail stats count overflow (%d >= %d)",
+			pkt->detail.count, NET_PKT_DETAIL_STATS_COUNT);
+		return;
+	}
+
+	pkt->detail.stat[pkt->detail.count++] = tick;
+}
+
+#define net_pkt_set_tx_stats_tick(pkt, tick) net_pkt_set_stats_tick(pkt, tick)
+#define net_pkt_set_rx_stats_tick(pkt, tick) net_pkt_set_stats_tick(pkt, tick)
+#else
+static inline uint32_t *net_pkt_stats_tick(struct net_pkt *pkt)
+{
+	ARG_UNUSED(pkt);
+
+	return NULL;
+}
+
+static inline int net_pkt_stats_tick_count(struct net_pkt *pkt)
+{
+	ARG_UNUSED(pkt);
+
+	return 0;
+}
+
+static inline void net_pkt_stats_tick_reset(struct net_pkt *pkt)
+{
+	ARG_UNUSED(pkt);
+}
+
+static inline void net_pkt_set_stats_tick(struct net_pkt *pkt, uint32_t tick)
+{
+	ARG_UNUSED(pkt);
+	ARG_UNUSED(tick);
+}
+
+#define net_pkt_set_tx_stats_tick(pkt, tick)
+#define net_pkt_set_rx_stats_tick(pkt, tick)
+#endif /* CONFIG_NET_PKT_TXTIME_STATS_DETAIL ||
+	  CONFIG_NET_PKT_RXTIME_STATS_DETAIL */
+
 static inline size_t net_pkt_get_len(struct net_pkt *pkt)
 {
 	return net_buf_frags_len(pkt->frags);
@@ -842,6 +971,11 @@ static inline uint8_t *net_pkt_data(struct net_pkt *pkt)
 static inline uint8_t *net_pkt_ip_data(struct net_pkt *pkt)
 {
 	return pkt->frags->data;
+}
+
+static inline bool net_pkt_is_empty(struct net_pkt *pkt)
+{
+	return !pkt->buffer || !net_pkt_data(pkt) || pkt->buffer->len == 0;
 }
 
 static inline struct net_linkaddr *net_pkt_lladdr_src(struct net_pkt *pkt)
@@ -891,6 +1025,16 @@ static inline void net_pkt_set_ieee802154_lqi(struct net_pkt *pkt,
 	pkt->ieee802154_lqi = lqi;
 }
 
+static inline bool net_pkt_ieee802154_arb(struct net_pkt *pkt)
+{
+	return pkt->ieee802154_arb;
+}
+
+static inline void net_pkt_set_ieee802154_arb(struct net_pkt *pkt, bool arb)
+{
+	pkt->ieee802154_arb = arb;
+}
+
 static inline bool net_pkt_ieee802154_ack_fpb(struct net_pkt *pkt)
 {
 	return pkt->ieee802154_ack_fpb;
@@ -901,7 +1045,73 @@ static inline void net_pkt_set_ieee802154_ack_fpb(struct net_pkt *pkt,
 {
 	pkt->ieee802154_ack_fpb = fpb;
 }
-#endif
+
+static inline bool net_pkt_ieee802154_frame_secured(struct net_pkt *pkt)
+{
+	return pkt->ieee802154_frame_secured;
+}
+
+static inline void net_pkt_set_ieee802154_frame_secured(struct net_pkt *pkt,
+							bool secured)
+{
+	pkt->ieee802154_frame_secured = secured;
+}
+
+static inline bool net_pkt_ieee802154_mac_hdr_rdy(struct net_pkt *pkt)
+{
+	return pkt->ieee802154_mac_hdr_rdy;
+}
+
+static inline void net_pkt_set_ieee802154_mac_hdr_rdy(struct net_pkt *pkt,
+						      bool rdy)
+{
+	pkt->ieee802154_mac_hdr_rdy = rdy;
+}
+
+#if defined(CONFIG_IEEE802154_2015)
+static inline bool net_pkt_ieee802154_fv2015(struct net_pkt *pkt)
+{
+	return pkt->ieee802154_fv2015;
+}
+
+static inline void net_pkt_set_ieee802154_fv2015(struct net_pkt *pkt, bool fv2015)
+{
+	pkt->ieee802154_fv2015 = fv2015;
+}
+
+static inline bool net_pkt_ieee802154_ack_seb(struct net_pkt *pkt)
+{
+	return pkt->ieee802154_ack_seb;
+}
+
+static inline void net_pkt_set_ieee802154_ack_seb(struct net_pkt *pkt, bool seb)
+{
+	pkt->ieee802154_ack_seb = seb;
+}
+
+static inline uint32_t net_pkt_ieee802154_ack_fc(struct net_pkt *pkt)
+{
+	return pkt->ieee802154_ack_fc;
+}
+
+static inline void net_pkt_set_ieee802154_ack_fc(struct net_pkt *pkt,
+						 uint32_t fc)
+{
+	pkt->ieee802154_ack_fc = fc;
+}
+
+static inline uint8_t net_pkt_ieee802154_ack_keyid(struct net_pkt *pkt)
+{
+	return pkt->ieee802154_ack_keyid;
+}
+
+static inline void net_pkt_set_ieee802154_ack_keyid(struct net_pkt *pkt,
+						    uint8_t keyid)
+{
+	pkt->ieee802154_ack_keyid = keyid;
+}
+#endif /* CONFIG_IEEE802154_2015 */
+#endif /* CONFIG_IEEE802154 || CONFIG_IEEE802154_RAW_MODE */
 
 #if defined(CONFIG_NET_IPV4_AUTO)
 static inline bool net_pkt_ipv4_auto(struct net_pkt *pkt)
@@ -1507,6 +1717,9 @@ void net_pkt_append_buffer(struct net_pkt *pkt, struct net_buf *buffer);
 /**
  * @brief Get available buffer space from a pkt
  *
+ * @note Reserved bytes (headroom) in any of the fragments are not considered to
+ *       be available.
+ *
  * @param pkt The net_pkt which buffer availability should be evaluated
  *
  * @return the amount of buffer available
@@ -1515,6 +1728,9 @@ size_t net_pkt_available_buffer(struct net_pkt *pkt);
 
 /**
  * @brief Get available buffer space for payload from a pkt
+ *
+ * @note Reserved bytes (headroom) in any of the fragments are not considered to
+ *       be available.
  *
  * @details Unlike net_pkt_available_buffer(), this will take into account
  *          the headers space.
@@ -1537,6 +1753,22 @@ size_t net_pkt_available_payload_buffer(struct net_pkt *pkt,
  * @param pkt The net_pkt which buffer will be trimmed
  */
 void net_pkt_trim_buffer(struct net_pkt *pkt);
+
+/**
+ * @brief Remove @a length bytes from tail of packet
+ *
+ * @details This function does not take packet cursor into account. It is a
+ *          helper to remove unneeded bytes from tail of packet (like appended
+ *          CRC). It takes care of buffer deallocation if removed bytes span
+ *          whole buffer(s).
+ *
+ * @param pkt    Network packet
+ * @param length Number of bytes to be removed
+ *
+ * @retval 0       On success.
+ * @retval -EINVAL If packet length is shorter than @a length.
+ */
+int net_pkt_remove_tail(struct net_pkt *pkt, size_t length);
 
 /**
  * @brief Initialize net_pkt cursor
@@ -1836,6 +2068,16 @@ uint16_t net_pkt_get_current_offset(struct net_pkt *pkt);
  * @return true if that is the case, false otherwise.
  */
 bool net_pkt_is_contiguous(struct net_pkt *pkt, size_t size);
+
+/**
+ * Get the contiguous buffer space
+ *
+ * @param pkt Network packet
+ *
+ * @return The available contiguous buffer space in bytes starting from the
+ *         current cursor position. 0 in case of an error.
+ */
+size_t net_pkt_get_contiguous_len(struct net_pkt *pkt);
 
 struct net_pkt_data_access {
 #if !defined(CONFIG_NET_HEADERS_ALWAYS_CONTIGUOUS)

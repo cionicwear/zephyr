@@ -8,7 +8,7 @@
 #include <ztest.h>
 
 #include <zephyr.h>
-#include <power/reboot.h>
+#include <sys/reboot.h>
 #include <string.h>
 
 #include <settings/settings.h>
@@ -89,7 +89,7 @@ void test_prepare_storage(void)
  */
 	int err;
 	const struct flash_area *fa;
-	struct device *dev;
+	const struct device *dev;
 	uint8_t new_val[FLASH_WRITE_BLOCK_SIZE];
 
 	if (prepared_mark[0] == ERASED_VAL) {
@@ -104,9 +104,6 @@ void test_prepare_storage(void)
 		zassert_true(err == 0, "Can't open storage flash area");
 
 		dev = flash_area_get_device(fa);
-
-		err = flash_write_protection_set(dev, false);
-		zassert_true(err == 0, "can't unprotect flash");
 
 		(void)memset(new_val, (~ERASED_VAL) & 0xFF,
 			     FLASH_WRITE_BLOCK_SIZE);
@@ -126,7 +123,8 @@ void test_init_setup(void)
 
 	test_prepare_storage();
 
-	settings_subsys_init();
+	err = settings_subsys_init();
+	zassert_true(err == 0, "subsys init failed");
 
 	err = settings_register(&c1_settings);
 	zassert_true(err == 0, "can't regsister the settings handler");

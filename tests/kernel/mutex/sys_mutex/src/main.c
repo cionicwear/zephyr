@@ -67,6 +67,7 @@ static SYS_MUTEX_DEFINE(no_access_mutex);
 #endif
 static ZTEST_BMEM SYS_MUTEX_DEFINE(not_my_mutex);
 static ZTEST_BMEM SYS_MUTEX_DEFINE(bad_count_mutex);
+extern void test_mutex_multithread_competition(void);
 
 /**
  *
@@ -423,13 +424,6 @@ void test_main(void)
 #ifdef CONFIG_USERSPACE
 	k_thread_access_grant(k_current_get(),
 			      &thread_12_thread_data, &thread_12_stack_area);
-
-	k_mem_domain_add_thread(&ztest_mem_domain, THREAD_05);
-	k_mem_domain_add_thread(&ztest_mem_domain, THREAD_06);
-	k_mem_domain_add_thread(&ztest_mem_domain, THREAD_07);
-	k_mem_domain_add_thread(&ztest_mem_domain, THREAD_08);
-	k_mem_domain_add_thread(&ztest_mem_domain, THREAD_09);
-	k_mem_domain_add_thread(&ztest_mem_domain, THREAD_11);
 #endif
 	rv = sys_mutex_lock(&not_my_mutex, K_NO_WAIT);
 	if (rv != 0) {
@@ -444,16 +438,17 @@ void test_main(void)
 	 */
 #ifdef CONFIG_USERSPACE
 	ztest_test_suite(mutex_complex,
-			 ztest_1cpu_user_unit_test(test_mutex),
+			 ztest_user_unit_test(test_mutex),
 			 ztest_user_unit_test(test_user_access),
 			 ztest_unit_test(test_supervisor_access));
 
 	ztest_run_test_suite(mutex_complex);
 #else
 	ztest_test_suite(mutex_complex,
-			 ztest_1cpu_unit_test(test_mutex),
+			 ztest_unit_test(test_mutex),
 			 ztest_unit_test(test_user_access),
-			 ztest_unit_test(test_supervisor_access));
+			 ztest_unit_test(test_supervisor_access),
+			 ztest_unit_test(test_mutex_multithread_competition));
 
 	ztest_run_test_suite(mutex_complex);
 #endif

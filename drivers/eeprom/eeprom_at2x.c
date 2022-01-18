@@ -35,64 +35,58 @@ LOG_MODULE_REGISTER(eeprom_at2x);
 #define EEPROM_AT25_STATUS_BP1 BIT(3) /* Block Protection 1 (RW) */
 
 struct eeprom_at2x_config {
-	const char *bus_dev_name;
-	uint16_t bus_addr;
-	uint32_t max_freq;
-	const char *spi_cs_dev_name;
-	gpio_pin_t spi_cs_pin;
-	gpio_dt_flags_t spi_cs_dt_flags;
-	gpio_pin_t wp_gpio_pin;
-	gpio_dt_flags_t wp_gpio_flags;
-	const char *wp_gpio_name;
+	union {
+#ifdef CONFIG_EEPROM_AT24
+		struct i2c_dt_spec i2c;
+#endif /* CONFIG_EEPROM_AT24 */
+#ifdef CONFIG_EEPROM_AT25
+		struct spi_dt_spec spi;
+#endif /* CONFIG_EEPROM_AT25 */
+	} bus;
+	struct gpio_dt_spec wp_gpio;
 	size_t size;
 	size_t pagesize;
 	uint8_t addr_width;
 	bool readonly;
 	uint16_t timeout;
+	bool (*bus_is_ready)(const struct device *dev);
 	eeprom_api_read read_fn;
 	eeprom_api_write write_fn;
 };
 
 struct eeprom_at2x_data {
-	struct device *bus_dev;
-#ifdef CONFIG_EEPROM_AT25
-	struct spi_config spi_cfg;
-	struct spi_cs_control spi_cs;
-#endif /* CONFIG_EEPROM_AT25 */
-	struct device *wp_gpio_dev;
 	struct k_mutex lock;
 };
 
-static inline int eeprom_at2x_write_protect(struct device *dev)
+static inline int eeprom_at2x_write_protect(const struct device *dev)
 {
-	const struct eeprom_at2x_config *config = dev->config_info;
-	struct eeprom_at2x_data *data = dev->driver_data;
+	const struct eeprom_at2x_config *config = dev->config;
 
-	if (!data->wp_gpio_dev) {
+	if (!config->wp_gpio.port) {
 		return 0;
 	}
 
-	return gpio_pin_set(data->wp_gpio_dev, config->wp_gpio_pin, 1);
+	return gpio_pin_set_dt(&config->wp_gpio, 1);
 }
 
-static inline int eeprom_at2x_write_enable(struct device *dev)
+static inline int eeprom_at2x_write_enable(const struct device *dev)
 {
-	const struct eeprom_at2x_config *config = dev->config_info;
-	struct eeprom_at2x_data *data = dev->driver_data;
+	const struct eeprom_at2x_config *config = dev->config;
 
-	if (!data->wp_gpio_dev) {
+	if (!config->wp_gpio.port) {
 		return 0;
 	}
 
-	return gpio_pin_set(data->wp_gpio_dev, config->wp_gpio_pin, 0);
+	return gpio_pin_set_dt(&config->wp_gpio, 0);
 }
 
-static int eeprom_at2x_read(struct device *dev, off_t offset, void *buf,
+static int eeprom_at2x_read(const struct device *dev, off_t offset, void *buf,
 			    size_t len)
 {
-	const struct eeprom_at2x_config *config = dev->config_info;
-	struct eeprom_at2x_data *data = dev->driver_data;
-	int err;
+	const struct eeprom_at2x_config *config = dev->config;
+	struct eeprom_at2x_data *data = dev->data;
+	uint8_t *pbuf = buf;
+	int ret;
 
 	if (!len) {
 		return 0;
@@ -104,21 +98,29 @@ static int eeprom_at2x_read(struct device *dev, off_t offset, void *buf,
 	}
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	err = config->read_fn(dev, offset, buf, len);
-	k_mutex_unlock(&data->lock);
+	while (len) {
+		ret = config->read_fn(dev, offset, pbuf, len);
+		if (ret < 0) {
+			LOG_ERR("failed to read EEPROM (err %d)", ret);
+			k_mutex_unlock(&data->lock);
+			return ret;
+		}
 
-	if (err) {
-		LOG_ERR("failed to read EEPROM (err %d)", err);
-		return err;
+		pbuf += ret;
+		offset += ret;
+		len -= ret;
 	}
+
+	k_mutex_unlock(&data->lock);
 
 	return 0;
 }
 
-static size_t eeprom_at2x_limit_write_count(struct device *dev, off_t offset,
+static size_t eeprom_at2x_limit_write_count(const struct device *dev,
+					    off_t offset,
 					    size_t len)
 {
-	const struct eeprom_at2x_config *config = dev->config_info;
+	const struct eeprom_at2x_config *config = dev->config;
 	size_t count = len;
 	off_t page_boundary;
 
@@ -136,11 +138,12 @@ static size_t eeprom_at2x_limit_write_count(struct device *dev, off_t offset,
 	return count;
 }
 
-static int eeprom_at2x_write(struct device *dev, off_t offset, const void *buf,
+static int eeprom_at2x_write(const struct device *dev, off_t offset,
+			     const void *buf,
 			     size_t len)
 {
-	const struct eeprom_at2x_config *config = dev->config_info;
-	struct eeprom_at2x_data *data = dev->driver_data;
+	const struct eeprom_at2x_config *config = dev->config;
+	struct eeprom_at2x_data *data = dev->data;
 	const uint8_t *pbuf = buf;
 	int ret;
 
@@ -191,28 +194,71 @@ static int eeprom_at2x_write(struct device *dev, off_t offset, const void *buf,
 	return ret;
 }
 
-static size_t eeprom_at2x_size(struct device *dev)
+static size_t eeprom_at2x_size(const struct device *dev)
 {
-	const struct eeprom_at2x_config *config = dev->config_info;
+	const struct eeprom_at2x_config *config = dev->config;
 
 	return config->size;
 }
 
 #ifdef CONFIG_EEPROM_AT24
-static int eeprom_at24_read(struct device *dev, off_t offset, void *buf,
+
+static bool eeprom_at24_bus_is_ready(const struct device *dev)
+{
+	const struct eeprom_at2x_config *config = dev->config;
+
+	return device_is_ready(config->bus.i2c.bus);
+}
+
+/**
+ * @brief translate an offset to a device address / offset pair
+ *
+ * It allows to address several devices as a continuous memory region
+ * but also to address higher part of eeprom for chips
+ * with more than 2^(addr_width) adressable word.
+ */
+static uint16_t eeprom_at24_translate_offset(const struct device *dev,
+					     off_t *offset)
+{
+	const struct eeprom_at2x_config *config = dev->config;
+
+	const uint16_t addr_incr = *offset >> config->addr_width;
+	*offset &= BIT_MASK(config->addr_width);
+
+	return config->bus.i2c.addr + addr_incr;
+}
+
+static size_t eeprom_at24_adjust_read_count(const struct device *dev,
+					    off_t offset, size_t len)
+{
+	const struct eeprom_at2x_config *config = dev->config;
+	const size_t remainder = BIT(config->addr_width) - offset;
+
+	if (len > remainder) {
+		len = remainder;
+	}
+
+	return len;
+}
+
+static int eeprom_at24_read(const struct device *dev, off_t offset, void *buf,
 			    size_t len)
 {
-	const struct eeprom_at2x_config *config = dev->config_info;
-	struct eeprom_at2x_data *data = dev->driver_data;
+	const struct eeprom_at2x_config *config = dev->config;
 	int64_t timeout;
 	uint8_t addr[2];
+	uint16_t bus_addr;
 	int err;
+
+	bus_addr = eeprom_at24_translate_offset(dev, &offset);
 
 	if (config->addr_width == 16) {
 		sys_put_be16(offset, addr);
 	} else {
 		addr[0] = offset & BIT_MASK(8);
 	}
+
+	len = eeprom_at24_adjust_read_count(dev, offset, len);
 
 	/*
 	 * A write cycle may be in progress so reads must be attempted
@@ -221,7 +267,7 @@ static int eeprom_at24_read(struct device *dev, off_t offset, void *buf,
 	timeout = k_uptime_get() + config->timeout;
 	while (1) {
 		int64_t now = k_uptime_get();
-		err = i2c_write_read(data->bus_dev, config->bus_addr,
+		err = i2c_write_read(config->bus.i2c.bus, bus_addr,
 				     addr, config->addr_width / 8,
 				     buf, len);
 		if (!err || now > timeout) {
@@ -230,19 +276,25 @@ static int eeprom_at24_read(struct device *dev, off_t offset, void *buf,
 		k_sleep(K_MSEC(1));
 	}
 
-	return err;
+	if (err < 0) {
+		return err;
+	}
+
+	return len;
 }
 
-static int eeprom_at24_write(struct device *dev, off_t offset,
+static int eeprom_at24_write(const struct device *dev, off_t offset,
 			     const void *buf, size_t len)
 {
-	const struct eeprom_at2x_config *config = dev->config_info;
-	struct eeprom_at2x_data *data = dev->driver_data;
+	const struct eeprom_at2x_config *config = dev->config;
 	int count = eeprom_at2x_limit_write_count(dev, offset, len);
 	uint8_t block[config->addr_width / 8 + count];
 	int64_t timeout;
+	uint16_t bus_addr;
 	int i = 0;
 	int err;
+
+	bus_addr = eeprom_at24_translate_offset(dev, &offset);
 
 	/*
 	 * Not all I2C EEPROMs support repeated start so the the
@@ -263,8 +315,8 @@ static int eeprom_at24_write(struct device *dev, off_t offset,
 	timeout = k_uptime_get() + config->timeout;
 	while (1) {
 		int64_t now = k_uptime_get();
-		err = i2c_write(data->bus_dev, block, sizeof(block),
-				config->bus_addr);
+		err = i2c_write(config->bus.i2c.bus, block, sizeof(block),
+				bus_addr);
 		if (!err || now > timeout) {
 			break;
 		}
@@ -280,9 +332,17 @@ static int eeprom_at24_write(struct device *dev, off_t offset,
 #endif /* CONFIG_EEPROM_AT24 */
 
 #ifdef CONFIG_EEPROM_AT25
-static int eeprom_at25_rdsr(struct device *dev, uint8_t *status)
+
+static bool eeprom_at25_bus_is_ready(const struct device *dev)
 {
-	struct eeprom_at2x_data *data = dev->driver_data;
+	const struct eeprom_at2x_config *config = dev->config;
+
+	return spi_is_ready(&config->bus.spi);
+}
+
+static int eeprom_at25_rdsr(const struct device *dev, uint8_t *status)
+{
+	const struct eeprom_at2x_config *config = dev->config;
 	uint8_t rdsr[2] = { EEPROM_AT25_RDSR, 0 };
 	uint8_t sr[2];
 	int err;
@@ -303,7 +363,7 @@ static int eeprom_at25_rdsr(struct device *dev, uint8_t *status)
 		.count = 1,
 	};
 
-	err = spi_transceive(data->bus_dev, &data->spi_cfg, &tx, &rx);
+	err = spi_transceive_dt(&config->bus.spi, &tx, &rx);
 	if (!err) {
 		*status = sr[1];
 	}
@@ -311,9 +371,9 @@ static int eeprom_at25_rdsr(struct device *dev, uint8_t *status)
 	return err;
 }
 
-static int eeprom_at25_wait_for_idle(struct device *dev)
+static int eeprom_at25_wait_for_idle(const struct device *dev)
 {
-	const struct eeprom_at2x_config *config = dev->config_info;
+	const struct eeprom_at2x_config *config = dev->config;
 	int64_t timeout;
 	uint8_t status;
 	int err;
@@ -339,11 +399,11 @@ static int eeprom_at25_wait_for_idle(struct device *dev)
 	return -EBUSY;
 }
 
-static int eeprom_at25_read(struct device *dev, off_t offset, void *buf,
+static int eeprom_at25_read(const struct device *dev, off_t offset, void *buf,
 			    size_t len)
 {
-	const struct eeprom_at2x_config *config = dev->config_info;
-	struct eeprom_at2x_data *data = dev->driver_data;
+	const struct eeprom_at2x_config *config = dev->config;
+	struct eeprom_at2x_data *data = dev->data;
 	size_t cmd_len = 1 + config->addr_width / 8;
 	uint8_t cmd[4] = { EEPROM_AT25_READ, 0, 0, 0 };
 	uint8_t *paddr;
@@ -384,10 +444,10 @@ static int eeprom_at25_read(struct device *dev, off_t offset, void *buf,
 	switch (config->addr_width) {
 	case 24:
 		*paddr++ = offset >> 16;
-		/* Fallthrough */
+		__fallthrough;
 	case 16:
 		*paddr++ = offset >> 8;
-		/* Fallthrough */
+		__fallthrough;
 	case 8:
 		*paddr++ = offset;
 		break;
@@ -402,12 +462,17 @@ static int eeprom_at25_read(struct device *dev, off_t offset, void *buf,
 		return err;
 	}
 
-	return spi_transceive(data->bus_dev, &data->spi_cfg, &tx, &rx);
+	err = spi_transceive_dt(&config->bus.spi, &tx, &rx);
+	if (err < 0) {
+		return err;
+	}
+
+	return len;
 }
 
-static int eeprom_at25_wren(struct device *dev)
+static int eeprom_at25_wren(const struct device *dev)
 {
-	struct eeprom_at2x_data *data = dev->driver_data;
+	const struct eeprom_at2x_config *config = dev->config;
 	uint8_t cmd = EEPROM_AT25_WREN;
 	const struct spi_buf tx_buf = {
 		.buf = &cmd,
@@ -418,14 +483,13 @@ static int eeprom_at25_wren(struct device *dev)
 		.count = 1,
 	};
 
-	return spi_write(data->bus_dev, &data->spi_cfg, &tx);
+	return spi_write_dt(&config->bus.spi, &tx);
 }
 
-static int eeprom_at25_write(struct device *dev, off_t offset,
+static int eeprom_at25_write(const struct device *dev, off_t offset,
 			     const void *buf, size_t len)
 {
-	const struct eeprom_at2x_config *config = dev->config_info;
-	struct eeprom_at2x_data *data = dev->driver_data;
+	const struct eeprom_at2x_config *config = dev->config;
 	int count = eeprom_at2x_limit_write_count(dev, offset, len);
 	uint8_t cmd[4] = { EEPROM_AT25_WRITE, 0, 0, 0 };
 	size_t cmd_len = 1 + config->addr_width / 8;
@@ -450,10 +514,10 @@ static int eeprom_at25_write(struct device *dev, off_t offset,
 	switch (config->addr_width) {
 	case 24:
 		*paddr++ = offset >> 16;
-		/* Fallthrough */
+		__fallthrough;
 	case 16:
 		*paddr++ = offset >> 8;
-		/* Fallthrough */
+		__fallthrough;
 	case 8:
 		*paddr++ = offset;
 		break;
@@ -473,7 +537,7 @@ static int eeprom_at25_write(struct device *dev, off_t offset,
 		return err;
 	}
 
-	err = spi_transceive(data->bus_dev, &data->spi_cfg, &tx, NULL);
+	err = spi_transceive_dt(&config->bus.spi, &tx, NULL);
 	if (err) {
 		return err;
 	}
@@ -482,52 +546,28 @@ static int eeprom_at25_write(struct device *dev, off_t offset,
 }
 #endif /* CONFIG_EEPROM_AT25 */
 
-static int eeprom_at2x_init(struct device *dev)
+static int eeprom_at2x_init(const struct device *dev)
 {
-	const struct eeprom_at2x_config *config = dev->config_info;
-	struct eeprom_at2x_data *data = dev->driver_data;
+	const struct eeprom_at2x_config *config = dev->config;
+	struct eeprom_at2x_data *data = dev->data;
 	int err;
 
 	k_mutex_init(&data->lock);
 
-	data->bus_dev = device_get_binding(config->bus_dev_name);
-	if (!data->bus_dev) {
-		LOG_ERR("could not get parent bus device");
+	if (!config->bus_is_ready(dev)) {
+		LOG_ERR("parent bus device not ready");
 		return -EINVAL;
 	}
 
-#ifdef CONFIG_EEPROM_AT25
-	data->spi_cfg.operation = SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB |
-		SPI_WORD_SET(8);
-	data->spi_cfg.frequency = config->max_freq;
-	data->spi_cfg.slave = config->bus_addr;
-
-	if (config->spi_cs_dev_name) {
-		data->spi_cs.gpio_dev =
-			device_get_binding(config->spi_cs_dev_name);
-		if (!data->spi_cs.gpio_dev) {
-			LOG_ERR("could not get SPI CS GPIO device");
+	if (config->wp_gpio.port) {
+		if (!device_is_ready(config->wp_gpio.port)) {
+			LOG_ERR("wp gpio device not ready");
 			return -EINVAL;
 		}
 
-		data->spi_cs.gpio_pin = config->spi_cs_pin;
-		data->spi_cs.gpio_dt_flags = config->spi_cs_dt_flags;
-		data->spi_cfg.cs = &data->spi_cs;
-	}
-#endif /* CONFIG_EEPROM_AT25 */
-
-	if (config->wp_gpio_name) {
-		data->wp_gpio_dev = device_get_binding(config->wp_gpio_name);
-		if (!data->wp_gpio_dev) {
-			LOG_ERR("could not get WP GPIO device");
-			return -EINVAL;
-		}
-
-		err = gpio_pin_configure(data->wp_gpio_dev, config->wp_gpio_pin,
-					 GPIO_OUTPUT_ACTIVE | config->wp_gpio_flags);
+		err = gpio_pin_configure_dt(&config->wp_gpio, GPIO_OUTPUT_ACTIVE);
 		if (err) {
-			LOG_ERR("failed to configure WP GPIO pin (err %d)",
-				err);
+			LOG_ERR("failed to configure WP GPIO pin (err %d)", err);
 			return err;
 		}
 	}
@@ -559,6 +599,14 @@ static const struct eeprom_driver_api eeprom_at2x_api = {
 
 #define INST_DT_AT2X(inst, t) DT_INST(inst, atmel_at##t)
 
+#define EEPROM_AT24_BUS(n, t) \
+	{ .i2c = I2C_DT_SPEC_GET(INST_DT_AT2X(n, t)) }
+
+#define EEPROM_AT25_BUS(n, t)						 \
+	{ .spi = SPI_DT_SPEC_GET(INST_DT_AT2X(n, t),			 \
+				 SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB | \
+				 SPI_WORD_SET(8), 0) }
+
 #define EEPROM_AT2X_DEVICE(n, t) \
 	ASSERT_PAGESIZE_IS_POWER_OF_2(DT_PROP(INST_DT_AT2X(n, t), pagesize)); \
 	ASSERT_SIZE_PAGESIZE_VALID(DT_PROP(INST_DT_AT2X(n, t), size), \
@@ -566,44 +614,22 @@ static const struct eeprom_driver_api eeprom_at2x_api = {
 	ASSERT_AT##t##_ADDR_W_VALID(DT_PROP(INST_DT_AT2X(n, t), \
 					    address_width)); \
 	static const struct eeprom_at2x_config eeprom_at##t##_config_##n = { \
-		.bus_dev_name = DT_BUS_LABEL(INST_DT_AT2X(n, t)), \
-		.bus_addr = DT_REG_ADDR(INST_DT_AT2X(n, t)), \
-		.max_freq = UTIL_AND( \
-			DT_NODE_HAS_PROP(INST_DT_AT2X(n, t), \
-					 spi_max_frequency), \
-			DT_PROP(INST_DT_AT2X(n, t), spi_max_frequency)), \
-		.spi_cs_dev_name = UTIL_AND( \
-			DT_SPI_DEV_HAS_CS_GPIOS(INST_DT_AT2X(n, t)), \
-			DT_SPI_DEV_CS_GPIOS_LABEL(INST_DT_AT2X(n, t))),	\
-		.spi_cs_pin = UTIL_AND( \
-			DT_SPI_DEV_HAS_CS_GPIOS(INST_DT_AT2X(n, t)), \
-			DT_SPI_DEV_CS_GPIOS_PIN(INST_DT_AT2X(n, t))), \
-		.spi_cs_dt_flags = UTIL_AND( \
-			DT_SPI_DEV_HAS_CS_GPIOS(INST_DT_AT2X(n, t)), \
-			DT_SPI_DEV_CS_GPIOS_DT_FLAGS(INST_DT_AT2X(n, t))), \
-		.wp_gpio_pin = UTIL_AND( \
-			DT_NODE_HAS_PROP(INST_DT_AT2X(n, t), wp_gpios), \
-			DT_GPIO_PIN(INST_DT_AT2X(n, t), wp_gpios)), \
-		.wp_gpio_flags = UTIL_AND( \
-			DT_NODE_HAS_PROP(INST_DT_AT2X(n, t), wp_gpios), \
-			DT_GPIO_FLAGS(INST_DT_AT2X(n, t), wp_gpios)), \
-		.wp_gpio_name = UTIL_AND( \
-			DT_NODE_HAS_PROP(INST_DT_AT2X(n, t), wp_gpios), \
-			DT_GPIO_LABEL(INST_DT_AT2X(n, t), wp_gpios)), \
+		.bus = EEPROM_AT##t##_BUS(n, t), \
+		.wp_gpio = GPIO_DT_SPEC_GET_OR(INST_DT_AT2X(n, t), wp_gpios, {0}), \
 		.size = DT_PROP(INST_DT_AT2X(n, t), size), \
 		.pagesize = DT_PROP(INST_DT_AT2X(n, t), pagesize), \
 		.addr_width = DT_PROP(INST_DT_AT2X(n, t), address_width), \
 		.readonly = DT_PROP(INST_DT_AT2X(n, t), read_only), \
 		.timeout = DT_PROP(INST_DT_AT2X(n, t), timeout), \
+		.bus_is_ready = eeprom_at##t##_bus_is_ready, \
 		.read_fn = eeprom_at##t##_read, \
 		.write_fn = eeprom_at##t##_write, \
 	}; \
 	static struct eeprom_at2x_data eeprom_at##t##_data_##n; \
-	DEVICE_AND_API_INIT(eeprom_at##t##_##n, \
-			    DT_LABEL(INST_DT_AT2X(n, t)), \
-			    &eeprom_at2x_init, &eeprom_at##t##_data_##n, \
+	DEVICE_DT_DEFINE(INST_DT_AT2X(n, t), &eeprom_at2x_init, \
+			    NULL, &eeprom_at##t##_data_##n, \
 			    &eeprom_at##t##_config_##n, POST_KERNEL, \
-			    CONFIG_KERNEL_INIT_PRIORITY_DEVICE, \
+			    CONFIG_EEPROM_AT2X_INIT_PRIORITY, \
 			    &eeprom_at2x_api)
 
 #define EEPROM_AT24_DEVICE(n) EEPROM_AT2X_DEVICE(n, 24)

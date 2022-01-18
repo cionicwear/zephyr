@@ -6,31 +6,26 @@ User and Developer Guides
 .. toctree::
    :maxdepth: 1
 
-   getting-help.rst
    beyond-GSG.rst
+   arch/index.rst
    bluetooth/index.rst
-   build/index
-   coding_guidelines/index
-   c_library
-   ../README.rst
-   documentation/index
+   docs/index.rst
    coccinelle.rst
    code-relocation.rst
    crypto/index
-   debugging/index
+   flash_debug/index
+   debug_tools/index
    device_mgmt/index
-   device_mgmt/dfu
    dts/index
-   env_vars.rst
-   coverage.rst
-   kconfig/index
+   emulator/index.rst
+
    modules.rst
    networking/index
    platformio/index.rst
    portability/index.rst
    porting/index
    test/index
-   tracing/index
+   tfm/index
    west/index
    optimizations/index
    zephyr_cmake_package.rst

@@ -66,17 +66,26 @@ static const struct flash_parameters flash_nios2_qspi_parameters = {
 	.erase_value = 0xff,
 };
 
-static int flash_nios2_qspi_erase(struct device *dev, off_t offset, size_t len)
+static int flash_nios2_qspi_write_protection(const struct device *dev,
+					     bool enable);
+
+static int flash_nios2_qspi_erase(const struct device *dev, off_t offset,
+				  size_t len)
 {
-	struct flash_nios2_qspi_config *flash_cfg = dev->driver_data;
+	struct flash_nios2_qspi_config *flash_cfg = dev->data;
 	alt_qspi_controller2_dev *qspi_dev = &flash_cfg->qspi_dev;
 	uint32_t block_offset, offset_in_block, length_to_erase;
 	uint32_t erase_offset = offset; /* address of next byte to erase */
 	uint32_t remaining_length = len; /* length of data left to be erased */
 	uint32_t flag_status;
-	int32_t rc = 0, i, timeout;
+	int32_t rc = 0, i, timeout, rc2;
 
 	k_sem_take(&flash_cfg->sem_lock, K_FOREVER);
+
+	rc = flash_nios2_qspi_write_protection(dev, false);
+	if (rc) {
+		goto qspi_erase_err;
+	}
 	/*
 	 * check if offset is word aligned and
 	 * length is with in the range
@@ -155,16 +164,23 @@ static int flash_nios2_qspi_erase(struct device *dev, off_t offset, size_t len)
 	}
 
 qspi_erase_err:
+	rc2 = flash_nios2_qspi_write_protection(dev, true);
+
+	if (!rc) {
+		rc = rc2;
+	}
+
 	k_sem_give(&flash_cfg->sem_lock);
 	return rc;
 
 }
 
-static int flash_nios2_qspi_write_block(struct device *dev, int block_offset,
+static int flash_nios2_qspi_write_block(const struct device *dev,
+					int block_offset,
 					int mem_offset, const void *data,
 					size_t len)
 {
-	struct flash_nios2_qspi_config *flash_cfg = dev->driver_data;
+	struct flash_nios2_qspi_config *flash_cfg = dev->data;
 	alt_qspi_controller2_dev *qspi_dev = &flash_cfg->qspi_dev;
 	uint32_t buffer_offset = 0U; /* offset into data buffer to get write data */
 	int32_t remaining_length = len; /* length left to write */
@@ -258,18 +274,23 @@ qspi_write_block_err:
 	return rc;
 }
 
-static int flash_nios2_qspi_write(struct device *dev, off_t offset,
+static int flash_nios2_qspi_write(const struct device *dev, off_t offset,
 				  const void *data, size_t len)
 {
-	struct flash_nios2_qspi_config *flash_cfg = dev->driver_data;
+	struct flash_nios2_qspi_config *flash_cfg = dev->data;
 	alt_qspi_controller2_dev *qspi_dev = &flash_cfg->qspi_dev;
 	uint32_t block_offset, offset_in_block, length_to_write;
 	uint32_t write_offset = offset; /* address of next byte to write */
 	uint32_t buffer_offset = 0U; /* offset into source buffer */
 	uint32_t remaining_length = len; /* length of data left to be written */
-	int32_t rc = 0, i;
+	int32_t rc = 0, i, rc2;
 
 	k_sem_take(&flash_cfg->sem_lock, K_FOREVER);
+
+	rc = flash_nios2_qspi_write_protection(dev, false);
+	if (rc) {
+		goto qspi_write_err;
+	}
 	/*
 	 * check if offset is word aligned and
 	 * length is with in the range
@@ -320,14 +341,20 @@ static int flash_nios2_qspi_write(struct device *dev, off_t offset,
 	}
 
 qspi_write_err:
+	rc2 = flash_nios2_qspi_write_protection(dev, true);
+
+	if (!rc) {
+		rc = rc2;
+	}
+
 	k_sem_give(&flash_cfg->sem_lock);
 	return rc;
 }
 
-static int flash_nios2_qspi_read(struct device *dev, off_t offset,
+static int flash_nios2_qspi_read(const struct device *dev, off_t offset,
 				 void *data, size_t len)
 {
-	struct flash_nios2_qspi_config *flash_cfg = dev->driver_data;
+	struct flash_nios2_qspi_config *flash_cfg = dev->data;
 	alt_qspi_controller2_dev *qspi_dev = &flash_cfg->qspi_dev;
 	uint32_t buffer_offset = 0U; /* offset into data buffer to get read data */
 	uint32_t remaining_length = len; /* length left to read */
@@ -391,14 +418,14 @@ static int flash_nios2_qspi_read(struct device *dev, off_t offset,
 	return rc;
 }
 
-static int flash_nios2_qspi_write_protection(struct device *dev, bool enable)
+static int flash_nios2_qspi_write_protection(const struct device *dev,
+					     bool enable)
 {
-	struct flash_nios2_qspi_config *flash_cfg = dev->driver_data;
+	struct flash_nios2_qspi_config *flash_cfg = dev->data;
 	alt_qspi_controller2_dev *qspi_dev = &flash_cfg->qspi_dev;
 	uint32_t status, lock_val;
 	int32_t rc = 0, timeout;
 
-	k_sem_take(&flash_cfg->sem_lock, K_FOREVER);
 	/* set write enable */
 	IOWR_32DIRECT(qspi_dev->csr_base,
 			ALTERA_QSPI_CONTROLLER2_MEM_OP_REG,
@@ -450,7 +477,6 @@ static int flash_nios2_qspi_write_protection(struct device *dev, bool enable)
 	/* clear flag status register */
 	IOWR_32DIRECT(qspi_dev->csr_base,
 			ALTERA_QSPI_CONTROLLER2_FLAG_STATUS_REG, 0x0);
-	k_sem_give(&flash_cfg->sem_lock);
 	return rc;
 }
 
@@ -463,7 +489,6 @@ flash_nios2_qspi_get_parameters(const struct device *dev)
 }
 
 static const struct flash_driver_api flash_nios2_qspi_api = {
-	.write_protection = flash_nios2_qspi_write_protection,
 	.erase = flash_nios2_qspi_erase,
 	.write = flash_nios2_qspi_write,
 	.read = flash_nios2_qspi_read,
@@ -474,9 +499,9 @@ static const struct flash_driver_api flash_nios2_qspi_api = {
 #endif
 };
 
-static int flash_nios2_qspi_init(struct device *dev)
+static int flash_nios2_qspi_init(const struct device *dev)
 {
-	struct flash_nios2_qspi_config *flash_cfg = dev->driver_data;
+	struct flash_nios2_qspi_config *flash_cfg = dev->data;
 
 	k_sem_init(&flash_cfg->sem_lock, 1, 1);
 	return 0;
@@ -495,8 +520,8 @@ struct flash_nios2_qspi_config flash_cfg = {
 	}
 };
 
-DEVICE_AND_API_INIT(flash_nios2_qspi,
-			CONFIG_SOC_FLASH_NIOS2_QSPI_DEV_NAME,
-			flash_nios2_qspi_init, &flash_cfg, NULL,
-			POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
-			&flash_nios2_qspi_api);
+DEVICE_DEFINE(flash_nios2_qspi,
+		CONFIG_SOC_FLASH_NIOS2_QSPI_DEV_NAME,
+		flash_nios2_qspi_init, NULL, &flash_cfg, NULL,
+		POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
+		&flash_nios2_qspi_api);

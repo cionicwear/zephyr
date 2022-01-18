@@ -3,6 +3,12 @@
 Network Stack Architecture
 ##########################
 
+.. toctree::
+   :maxdepth: 1
+   :hidden:
+
+   net_pkt_processing_stats.rst
+
 The Zephyr network stack is a native network stack specifically designed
 for Zephyr OS. It consists of layers, each meant to provide certain services
 to other layers. Network stack functionality is highly configurable via Kconfig
@@ -96,7 +102,7 @@ Data receiving (RX)
    header and frame check sequence, etc.
 
 4. The packet is processed by a network interface. The network statistics are
-   collected if enabled by :option:`CONFIG_NET_STATISTICS`.
+   collected if enabled by :kconfig:`CONFIG_NET_STATISTICS`.
 
 5. The packet is then passed to L3 processing. If the packet is IP based,
    then the L3 layer checks if the packet is a proper IPv6 or IPv4 packet.
@@ -156,3 +162,10 @@ one :ref:`thread <threads_v2>` to another.
 These :ref:`threads <threads_v2>` might run in different contexts
 (:ref:`kernel <kernel_api>` vs. :ref:`userspace <usermode_api>`) and with different
 :ref:`priorities <scheduling_v2>`.
+
+
+Network packet processing statistics
+************************************
+
+See information about network processing statistics
+:ref:`here <net_pkt_processing_stats>`.

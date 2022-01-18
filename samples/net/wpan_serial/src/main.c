@@ -24,6 +24,12 @@ LOG_MODULE_REGISTER(wpan_serial, CONFIG_USB_DEVICE_LOG_LEVEL);
 #include <net_private.h>
 #include <net/ieee802154_radio.h>
 
+#if IS_ENABLED(CONFIG_NET_TC_THREAD_COOPERATIVE)
+#define THREAD_PRIORITY K_PRIO_COOP(CONFIG_NUM_COOP_PRIORITIES - 1)
+#else
+#define THREAD_PRIORITY K_PRIO_PREEMPT(8)
+#endif
+
 #define SLIP_END     0300
 #define SLIP_ESC     0333
 #define SLIP_ESC_END 0334
@@ -50,11 +56,11 @@ static uint8_t slip_buf[1 + 2 * CONFIG_NET_BUF_DATA_SIZE];
 
 /* ieee802.15.4 device */
 static struct ieee802154_radio_api *radio_api;
-static struct device *ieee802154_dev;
+static const struct device *ieee802154_dev;
 uint8_t mac_addr[8];
 
 /* UART device */
-static struct device *uart_dev;
+static const struct device *uart_dev;
 
 /* SLIP state machine */
 static uint8_t slip_state = STATE_OK;
@@ -127,8 +133,10 @@ static int slip_process_byte(unsigned char c)
 	return 0;
 }
 
-static void interrupt_handler(struct device *dev)
+static void interrupt_handler(const struct device *dev, void *user_data)
 {
+	ARG_UNUSED(user_data);
+
 	while (uart_irq_update(dev) && uart_irq_is_pending(dev)) {
 		unsigned char byte;
 
@@ -412,7 +420,7 @@ static void init_rx_queue(void)
 	k_thread_create(&rx_thread_data, rx_stack,
 			K_THREAD_STACK_SIZEOF(rx_stack),
 			(k_thread_entry_t)rx_thread,
-			NULL, NULL, NULL, K_PRIO_COOP(8), 0, K_NO_WAIT);
+			NULL, NULL, NULL, THREAD_PRIORITY, 0, K_NO_WAIT);
 }
 
 static void init_tx_queue(void)
@@ -422,13 +430,13 @@ static void init_tx_queue(void)
 	k_thread_create(&tx_thread_data, tx_stack,
 			K_THREAD_STACK_SIZEOF(tx_stack),
 			(k_thread_entry_t)tx_thread,
-			NULL, NULL, NULL, K_PRIO_COOP(8), 0, K_NO_WAIT);
+			NULL, NULL, NULL, THREAD_PRIORITY, 0, K_NO_WAIT);
 }
 
 /**
  * FIXME choose correct OUI, or add support in L2
  */
-static uint8_t *get_mac(struct device *dev)
+static uint8_t *get_mac(const struct device *dev)
 {
 	uint32_t *ptr = (uint32_t *)mac_addr;
 
@@ -454,7 +462,7 @@ static bool init_ieee802154(void)
 		return false;
 	}
 
-	radio_api = (struct ieee802154_radio_api *)ieee802154_dev->driver_api;
+	radio_api = (struct ieee802154_radio_api *)ieee802154_dev->api;
 
 	/**
 	 * Do actual initialization of the chip
@@ -512,17 +520,22 @@ int net_recv_data(struct net_if *iface, struct net_pkt *pkt)
 	return 0;
 }
 
+enum net_verdict ieee802154_radio_handle_ack(struct net_if *iface, struct net_pkt *pkt)
+{
+	return NET_CONTINUE;
+}
+
 void main(void)
 {
-	struct device *dev;
+	const struct device *dev;
 	uint32_t baudrate, dtr = 0U;
 	int ret;
 
 	LOG_INF("Starting wpan_serial application");
 
-	dev = device_get_binding("CDC_ACM_0");
-	if (!dev) {
-		LOG_ERR("CDC ACM device not found");
+	dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);
+	if (!device_is_ready(dev)) {
+		LOG_ERR("CDC ACM device not ready");
 		return;
 	}
 
@@ -570,7 +583,7 @@ void main(void)
 	if (!init_ieee802154()) {
 		LOG_ERR("Unable to initialize ieee802154");
 		return;
-	};
+	}
 
 	uart_irq_callback_set(dev, interrupt_handler);
 

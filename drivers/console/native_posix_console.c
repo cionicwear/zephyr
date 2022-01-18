@@ -64,7 +64,7 @@ static struct k_fifo *lines_queue;
 static uint8_t (*completion_cb)(char *line, uint8_t len);
 static bool stdin_is_tty;
 
-static K_THREAD_STACK_DEFINE(stack, CONFIG_ARCH_POSIX_RECOMMENDED_STACK_SIZE);
+static K_KERNEL_STACK_DEFINE(stack, CONFIG_ARCH_POSIX_RECOMMENDED_STACK_SIZE);
 static struct k_thread native_stdio_thread;
 
 static inline void found_eof(void)
@@ -256,7 +256,7 @@ static void native_stdio_runner(void *p1, void *p2, void *p3)
 }
 #endif /* CONFIG_NATIVE_POSIX_STDIN_CONSOLE */
 
-static int native_posix_console_init(struct device *arg)
+static int native_posix_console_init(const struct device *arg)
 {
 	ARG_UNUSED(arg);
 

@@ -28,6 +28,15 @@
 #include <sys/util.h>
 #include <net/net_if.h>
 #include <net/ethernet_vlan.h>
+#include <net/ptp_time.h>
+
+#if defined(CONFIG_NET_DSA)
+#include <net/dsa.h>
+#endif
+
+#if defined(CONFIG_NET_ETHERNET_BRIDGE)
+#include <net/ethernet_bridge.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,6 +59,7 @@ struct net_eth_addr {
 
 #define NET_ETH_PTYPE_ARP		0x0806
 #define NET_ETH_PTYPE_IP		0x0800
+#define NET_ETH_PTYPE_TSN		0x22f0 /* TSN (IEEE 1722) packet */
 #define NET_ETH_PTYPE_IPV6		0x86dd
 #define NET_ETH_PTYPE_VLAN		0x8100
 #define NET_ETH_PTYPE_PTP		0x88f7
@@ -71,10 +81,25 @@ struct net_eth_addr {
 #if !defined(ETH_P_8021Q)
 #define ETH_P_8021Q	NET_ETH_PTYPE_VLAN
 #endif
+#if !defined(ETH_P_TSN)
+#define ETH_P_TSN	NET_ETH_PTYPE_TSN
+#endif
 
 #define NET_ETH_MINIMAL_FRAME_SIZE	60
 #define NET_ETH_MTU			1500
-#define NET_ETH_MAX_FRAME_SIZE	(NET_ETH_MTU + sizeof(struct net_eth_hdr))
+#define _NET_ETH_MAX_FRAME_SIZE	(NET_ETH_MTU + sizeof(struct net_eth_hdr))
+#define _NET_ETH_MAX_HDR_SIZE		(sizeof(struct net_eth_hdr))
+/*
+ * Extend the max frame size for DSA (KSZ8794) by one byte (to 1519) to
+ * store tail tag.
+ */
+#if defined(CONFIG_NET_DSA)
+#define NET_ETH_MAX_FRAME_SIZE (_NET_ETH_MAX_FRAME_SIZE + DSA_TAG_SIZE)
+#define NET_ETH_MAX_HDR_SIZE (_NET_ETH_MAX_HDR_SIZE + DSA_TAG_SIZE)
+#else
+#define NET_ETH_MAX_FRAME_SIZE (_NET_ETH_MAX_FRAME_SIZE)
+#define NET_ETH_MAX_HDR_SIZE (_NET_ETH_MAX_HDR_SIZE)
+#endif
 
 #define NET_ETH_VLAN_HDR_SIZE	4
 
@@ -126,6 +151,19 @@ enum ethernet_hw_caps {
 
 	/** VLAN Tag stripping */
 	ETHERNET_HW_VLAN_TAG_STRIP	= BIT(14),
+
+	/** DSA switch */
+	ETHERNET_DSA_SLAVE_PORT	= BIT(15),
+	ETHERNET_DSA_MASTER_PORT	= BIT(16),
+
+	/** IEEE 802.1Qbv (scheduled traffic) supported */
+	ETHERNET_QBV			= BIT(17),
+
+	/** IEEE 802.1Qbu (frame preemption) supported */
+	ETHERNET_QBU			= BIT(18),
+
+	/** TXTIME supported */
+	ETHERNET_TXTIME			= BIT(19),
 };
 
 /** @cond INTERNAL_HIDDEN */
@@ -136,9 +174,13 @@ enum ethernet_config_type {
 	ETHERNET_CONFIG_TYPE_DUPLEX,
 	ETHERNET_CONFIG_TYPE_MAC_ADDRESS,
 	ETHERNET_CONFIG_TYPE_QAV_PARAM,
+	ETHERNET_CONFIG_TYPE_QBV_PARAM,
+	ETHERNET_CONFIG_TYPE_QBU_PARAM,
+	ETHERNET_CONFIG_TYPE_TXTIME_PARAM,
 	ETHERNET_CONFIG_TYPE_PROMISC_MODE,
 	ETHERNET_CONFIG_TYPE_PRIORITY_QUEUES_NUM,
 	ETHERNET_CONFIG_TYPE_FILTER,
+	ETHERNET_CONFIG_TYPE_PORTS_NUM,
 };
 
 enum ethernet_qav_param_type {
@@ -172,6 +214,123 @@ struct ethernet_qav_param {
 
 /** @cond INTERNAL_HIDDEN */
 
+enum ethernet_qbv_param_type {
+	ETHERNET_QBV_PARAM_TYPE_STATUS,
+	ETHERNET_QBV_PARAM_TYPE_GATE_CONTROL_LIST,
+	ETHERNET_QBV_PARAM_TYPE_GATE_CONTROL_LIST_LEN,
+	ETHERNET_QBV_PARAM_TYPE_TIME,
+};
+
+enum ethernet_qbv_state_type {
+	ETHERNET_QBV_STATE_TYPE_ADMIN,
+	ETHERNET_QBV_STATE_TYPE_OPER,
+};
+
+enum ethernet_gate_state_operation {
+	ETHERNET_SET_GATE_STATE,
+	ETHERNET_SET_AND_HOLD_MAC_STATE,
+	ETHERNET_SET_AND_RELEASE_MAC_STATE,
+};
+
+/** @endcond */
+
+struct ethernet_qbv_param {
+	/** Port id */
+	int port_id;
+	/** Type of Qbv parameter */
+	enum ethernet_qbv_param_type type;
+	/** What state (Admin/Oper) parameters are these */
+	enum ethernet_qbv_state_type state;
+	union {
+		/** True if Qbv is enabled or not */
+		bool enabled;
+
+		struct {
+			/** True = open, False = closed */
+			bool gate_status[NET_TC_TX_COUNT];
+
+			/** GateState operation */
+			enum ethernet_gate_state_operation operation;
+
+			/** Time interval ticks (nanoseconds) */
+			uint32_t time_interval;
+
+			/** Gate control list row */
+			uint16_t row;
+		} gate_control;
+
+		/** Number of entries in gate control list */
+		uint32_t gate_control_list_len;
+
+		/* The time values are set in one go when type is set to
+		 * ETHERNET_QBV_PARAM_TYPE_TIME
+		 */
+		struct {
+			/** Base time */
+			struct net_ptp_extended_time base_time;
+
+			/** Cycle time */
+			struct net_ptp_time cycle_time;
+
+			/** Extension time (nanoseconds) */
+			uint32_t extension_time;
+		};
+	};
+};
+
+/** @cond INTERNAL_HIDDEN */
+
+enum ethernet_qbu_param_type {
+	ETHERNET_QBU_PARAM_TYPE_STATUS,
+	ETHERNET_QBU_PARAM_TYPE_RELEASE_ADVANCE,
+	ETHERNET_QBU_PARAM_TYPE_HOLD_ADVANCE,
+	ETHERNET_QBU_PARAM_TYPE_PREEMPTION_STATUS_TABLE,
+
+	/* Some preemption settings are from Qbr spec. */
+	ETHERNET_QBR_PARAM_TYPE_LINK_PARTNER_STATUS,
+	ETHERNET_QBR_PARAM_TYPE_ADDITIONAL_FRAGMENT_SIZE,
+};
+
+enum ethernet_qbu_preempt_status {
+	ETHERNET_QBU_STATUS_EXPRESS,
+	ETHERNET_QBU_STATUS_PREEMPTABLE
+} __packed;
+
+/** @endcond */
+
+struct ethernet_qbu_param {
+	/** Port id */
+	int port_id;
+	/** Type of Qbu parameter */
+	enum ethernet_qbu_param_type type;
+	union {
+		/** Hold advance (nanoseconds) */
+		uint32_t hold_advance;
+
+		/** Release advance (nanoseconds) */
+		uint32_t release_advance;
+
+		/** sequence of framePreemptionAdminStatus values.
+		 */
+		enum ethernet_qbu_preempt_status
+				frame_preempt_statuses[NET_TC_TX_COUNT];
+
+		/** True if Qbu is enabled or not */
+		bool enabled;
+
+		/** Link partner status (from Qbr) */
+		bool link_partner_status;
+
+		/** Additional fragment size (from Qbr). The minimum non-final
+		 * fragment size is (additional_fragment_size + 1) * 64 octets
+		 */
+		uint8_t additional_fragment_size : 2;
+	};
+};
+
+
+/** @cond INTERNAL_HIDDEN */
+
 enum ethernet_filter_type {
 	ETHERNET_FILTER_TYPE_SRC_MAC_ADDRESS,
 	ETHERNET_FILTER_TYPE_DST_MAC_ADDRESS,
@@ -186,6 +345,23 @@ struct ethernet_filter {
 	struct net_eth_addr mac_address;
 	/** Set (true) or unset (false) the filter */
 	bool set;
+};
+
+/** @cond INTERNAL_HIDDEN */
+
+enum ethernet_txtime_param_type {
+	ETHERNET_TXTIME_PARAM_TYPE_ENABLE_QUEUES,
+};
+
+/** @endcond */
+
+struct ethernet_txtime_param {
+	/** Type of TXTIME parameter */
+	enum ethernet_txtime_param_type type;
+	/** Queue number for configuring TXTIME */
+	int queue_id;
+	/** Enable or disable TXTIME per queue */
+	bool enable_txtime;
 };
 
 /** @cond INTERNAL_HIDDEN */
@@ -204,8 +380,12 @@ struct ethernet_config {
 		struct net_eth_addr mac_address;
 
 		struct ethernet_qav_param qav_param;
+		struct ethernet_qbv_param qbv_param;
+		struct ethernet_qbu_param qbu_param;
+		struct ethernet_txtime_param txtime_param;
 
 		int priority_queues_num;
+		int ports_num;
 
 		struct ethernet_filter filter;
 	};
@@ -224,25 +404,25 @@ struct ethernet_api {
 	 * should be set by driver if statistics needs to be collected
 	 * for that driver.
 	 */
-	struct net_stats_eth *(*get_stats)(struct device *dev);
+	struct net_stats_eth *(*get_stats)(const struct device *dev);
 #endif
 
 	/** Start the device */
-	int (*start)(struct device *dev);
+	int (*start)(const struct device *dev);
 
 	/** Stop the device */
-	int (*stop)(struct device *dev);
+	int (*stop)(const struct device *dev);
 
 	/** Get the device capabilities */
-	enum ethernet_hw_caps (*get_capabilities)(struct device *dev);
+	enum ethernet_hw_caps (*get_capabilities)(const struct device *dev);
 
 	/** Set specific hardware configuration */
-	int (*set_config)(struct device *dev,
+	int (*set_config)(const struct device *dev,
 			  enum ethernet_config_type type,
 			  const struct ethernet_config *config);
 
 	/** Get hardware specific configuration */
-	int (*get_config)(struct device *dev,
+	int (*get_config)(const struct device *dev,
 			  enum ethernet_config_type type,
 			  struct ethernet_config *config);
 
@@ -252,17 +432,17 @@ struct ethernet_api {
 	 * if it is false then the tag was removed. The driver can utilize
 	 * this information if needed.
 	 */
-	int (*vlan_setup)(struct device *dev, struct net_if *iface,
+	int (*vlan_setup)(const struct device *dev, struct net_if *iface,
 			  uint16_t tag, bool enable);
 #endif /* CONFIG_NET_VLAN */
 
 #if defined(CONFIG_PTP_CLOCK)
 	/** Return ptp_clock device that is tied to this ethernet device */
-	struct device *(*get_ptp_clock)(struct device *dev);
+	const struct device *(*get_ptp_clock)(const struct device *dev);
 #endif /* CONFIG_PTP_CLOCK */
 
 	/** Send a network packet */
-	int (*send)(struct device *dev, struct net_pkt *pkt);
+	int (*send)(const struct device *dev, struct net_pkt *pkt);
 };
 
 /* Make sure that the network interface API is properly setup inside
@@ -323,8 +503,17 @@ struct ethernet_lldp {
 };
 #endif /* CONFIG_NET_LLDP */
 
+enum ethernet_flags {
+	ETH_CARRIER_UP,
+};
+
 /** Ethernet L2 context that is needed for VLAN */
 struct ethernet_context {
+	/** Flags representing ethernet state, which are accessed from multiple
+	 * threads.
+	 */
+	atomic_t flags;
+
 #if defined(CONFIG_NET_VLAN)
 	struct ethernet_vlan vlan[NET_VLAN_MAX_COUNT];
 
@@ -336,19 +525,20 @@ struct ethernet_context {
 	ATOMIC_DEFINE(interfaces, NET_VLAN_MAX_COUNT);
 #endif
 
-	struct {
-		/** Carrier ON/OFF handler worker. This is used to create
-		 * network interface UP/DOWN event when ethernet L2 driver
-		 * notices carrier ON/OFF situation. We must not create another
-		 * network management event from inside management handler thus
-		 * we use worker thread to trigger the UP/DOWN event.
-		 */
-		struct k_work work;
+#if defined(CONFIG_NET_ETHERNET_BRIDGE)
+	struct eth_bridge_iface_context bridge;
+#endif
 
-		/** Network interface that is detecting carrier ON/OFF event.
-		 */
-		struct net_if *iface;
-	} carrier_mgmt;
+	/** Carrier ON/OFF handler worker. This is used to create
+	 * network interface UP/DOWN event when ethernet L2 driver
+	 * notices carrier ON/OFF situation. We must not create another
+	 * network management event from inside management handler thus
+	 * we use worker thread to trigger the UP/DOWN event.
+	 */
+	struct k_work carrier_work;
+
+	/** Network interface. */
+	struct net_if *iface;
 
 #if defined(CONFIG_NET_LLDP)
 	struct ethernet_lldp lldp[NET_VLAN_MAX_COUNT];
@@ -367,6 +557,22 @@ struct ethernet_context {
 	int port;
 #endif
 
+#if defined(CONFIG_NET_DSA)
+	/** DSA RX callback function - for custom processing - like e.g.
+	 * redirecting packets when MAC address is caught
+	 */
+	dsa_net_recv_cb_t dsa_recv_cb;
+
+	/** Switch physical port number */
+	uint8_t dsa_port_idx;
+
+	/** DSA context pointer */
+	struct dsa_context *dsa_ctx;
+
+	/** Send a network packet via DSA master port */
+	dsa_send_t dsa_send;
+#endif
+
 #if defined(CONFIG_NET_VLAN)
 	/** Flag that tells whether how many VLAN tags are enabled for this
 	 * context. The same information can be dug from the vlan array but
@@ -375,8 +581,11 @@ struct ethernet_context {
 	int8_t vlan_enabled;
 #endif
 
+	/** Is network carrier up */
+	bool is_net_carrier_up : 1;
+
 	/** Is this context already initialized */
-	bool is_init;
+	bool is_init : 1;
 };
 
 /**
@@ -473,6 +682,15 @@ const struct net_eth_addr *net_eth_broadcast_addr(void);
 /** @endcond */
 
 /**
+ * @brief Convert IPv4 multicast address to Ethernet address.
+ *
+ * @param ipv4_addr IPv4 multicast address
+ * @param mac_addr Output buffer for Ethernet address
+ */
+void net_eth_ipv4_mcast_to_mac_addr(const struct in_addr *ipv4_addr,
+				    struct net_eth_addr *mac_addr);
+
+/**
  * @brief Convert IPv6 multicast address to Ethernet address.
  *
  * @param ipv6_addr IPv6 multicast address
@@ -492,7 +710,7 @@ static inline
 enum ethernet_hw_caps net_eth_get_hw_capabilities(struct net_if *iface)
 {
 	const struct ethernet_api *eth =
-		(struct ethernet_api *)net_if_get_device(iface)->driver_api;
+		(struct ethernet_api *)net_if_get_device(iface)->api;
 
 	if (!eth->get_capabilities) {
 		return (enum ethernet_hw_caps)0;
@@ -607,6 +825,25 @@ static inline bool net_eth_get_vlan_status(struct net_if *iface)
 }
 #endif
 
+#if defined(CONFIG_NET_VLAN)
+#define Z_ETH_NET_DEVICE_INIT(node_id, dev_name, drv_name, init_fn,	\
+			      pm_control_fn, data, cfg, prio, api, mtu)	\
+	Z_DEVICE_DEFINE(node_id, dev_name, drv_name, init_fn,		\
+			pm_control_fn, data, cfg, POST_KERNEL,		\
+			prio, api);					\
+	NET_L2_DATA_INIT(dev_name, 0, NET_L2_GET_CTX_TYPE(ETHERNET_L2));\
+	NET_IF_INIT(dev_name, 0, ETHERNET_L2, mtu, NET_VLAN_MAX_COUNT)
+
+#else /* CONFIG_NET_VLAN */
+
+#define Z_ETH_NET_DEVICE_INIT(node_id, dev_name, drv_name, init_fn,	\
+			      pm_control_fn, data, cfg, prio, api, mtu)	\
+	Z_NET_DEVICE_INIT(node_id, dev_name, drv_name, init_fn,		\
+			  pm_control_fn, data, cfg, prio, api,		\
+			  ETHERNET_L2, NET_L2_GET_CTX_TYPE(ETHERNET_L2),\
+			  mtu)
+#endif /* CONFIG_NET_VLAN */
+
 /**
  * @def ETH_NET_DEVICE_INIT
  *
@@ -616,33 +853,60 @@ static inline bool net_eth_get_vlan_status(struct net_if *iface)
  * @param drv_name The name this instance of the driver exposes to
  * the system.
  * @param init_fn Address to the init function of the driver.
- * @param pm_control_fn Pointer to device_pm_control function.
- * Can be empty function (device_pm_control_nop) if not implemented.
+ * @param pm_control_fn Pointer to pm_control function.
+ * Can be NULL if not implemented.
  * @param data Pointer to the device's private data.
- * @param cfg_info The address to the structure containing the
+ * @param cfg The address to the structure containing the
  * configuration information for this instance of the driver.
  * @param prio The initialization level at which configuration occurs.
  * @param api Provides an initial pointer to the API function struct
  * used by the driver. Can be NULL.
  * @param mtu Maximum transfer unit in bytes for this network interface.
  */
-#if defined(CONFIG_NET_VLAN)
 #define ETH_NET_DEVICE_INIT(dev_name, drv_name, init_fn, pm_control_fn,	\
-			    data, cfg_info, prio, api, mtu)		\
-	DEVICE_DEFINE(dev_name, drv_name, init_fn, pm_control_fn, data,	\
-		      cfg_info, POST_KERNEL, prio, api);		\
-	NET_L2_DATA_INIT(dev_name, 0, NET_L2_GET_CTX_TYPE(ETHERNET_L2)); \
-	NET_IF_INIT(dev_name, 0, ETHERNET_L2, mtu, NET_VLAN_MAX_COUNT)
+			    data, cfg, prio, api, mtu)			\
+	Z_ETH_NET_DEVICE_INIT(DT_INVALID_NODE, dev_name, drv_name,	\
+			      init_fn, pm_control_fn, data, cfg, prio,	\
+			      api, mtu)
 
-#else /* CONFIG_NET_VLAN */
+/**
+ * @def ETH_NET_DEVICE_DT_DEFINE
+ *
+ * @brief Like ETH_NET_DEVICE_INIT but taking metadata from a devicetree.
+ * Create an Ethernet network interface and bind it to network device.
+ *
+ * @param node_id The devicetree node identifier.
+ * @param init_fn Address to the init function of the driver.
+ * @param pm_control_fn Pointer to pm_control function.
+ * Can be NULL if not implemented.
+ * @param data Pointer to the device's private data.
+ * @param cfg The address to the structure containing the
+ * configuration information for this instance of the driver.
+ * @param prio The initialization level at which configuration occurs.
+ * @param api Provides an initial pointer to the API function struct
+ * used by the driver. Can be NULL.
+ * @param mtu Maximum transfer unit in bytes for this network interface.
+ */
+#define ETH_NET_DEVICE_DT_DEFINE(node_id, init_fn, pm_control_fn, data,	\
+			       cfg, prio, api, mtu)			\
+	Z_ETH_NET_DEVICE_INIT(node_id, Z_DEVICE_DT_DEV_NAME(node_id),	\
+			      DT_PROP_OR(node_id, label, ""),		\
+			      init_fn, pm_control_fn, data, cfg, prio,	\
+			      api, mtu)
 
-#define ETH_NET_DEVICE_INIT(dev_name, drv_name, init_fn, pm_control_fn,	\
-			    data, cfg_info, prio, api, mtu)		\
-	NET_DEVICE_INIT(dev_name, drv_name, init_fn, pm_control_fn,	\
-			data, cfg_info, prio, api, ETHERNET_L2,		\
-			NET_L2_GET_CTX_TYPE(ETHERNET_L2), mtu)
-
-#endif /* CONFIG_NET_VLAN */
+/**
+ * @def ETH_NET_DEVICE_DT_INST_DEFINE
+ *
+ * @brief Like ETH_NET_DEVICE_DT_DEFINE for an instance of a DT_DRV_COMPAT
+ * compatible
+ *
+ * @param inst instance number.  This is replaced by
+ * <tt>DT_DRV_COMPAT(inst)</tt> in the call to ETH_NET_DEVICE_DT_DEFINE.
+ *
+ * @param ... other parameters as expected by ETH_NET_DEVICE_DT_DEFINE.
+ */
+#define ETH_NET_DEVICE_DT_INST_DEFINE(inst, ...) \
+	ETH_NET_DEVICE_DT_DEFINE(DT_DRV_INST(inst), __VA_ARGS__)
 
 /**
  * @brief Inform ethernet L2 driver that ethernet carrier is detected.
@@ -680,9 +944,9 @@ int net_eth_promisc_mode(struct net_if *iface, bool enable);
  * ethernet interface does not support PTP.
  */
 #if defined(CONFIG_PTP_CLOCK)
-struct device *net_eth_get_ptp_clock(struct net_if *iface);
+const struct device *net_eth_get_ptp_clock(struct net_if *iface);
 #else
-static inline struct device *net_eth_get_ptp_clock(struct net_if *iface)
+static inline const struct device *net_eth_get_ptp_clock(struct net_if *iface)
 {
 	ARG_UNUSED(iface);
 
@@ -699,7 +963,7 @@ static inline struct device *net_eth_get_ptp_clock(struct net_if *iface)
  * @return Pointer to PTP clock if found, NULL if not found or if this
  * ethernet interface index does not support PTP.
  */
-__syscall struct device *net_eth_get_ptp_clock_by_index(int index);
+__syscall const struct device *net_eth_get_ptp_clock_by_index(int index);
 
 /**
  * @brief Return gPTP port number attached to this interface.

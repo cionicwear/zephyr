@@ -9,7 +9,6 @@
 LOG_MODULE_REGISTER(wpanusb);
 
 #include <usb/usb_device.h>
-#include <usb/usb_common.h>
 #include <usb_descriptor.h>
 
 #include <net/buf.h>
@@ -18,6 +17,12 @@ LOG_MODULE_REGISTER(wpanusb);
 #include <net_private.h>
 
 #include "wpanusb.h"
+
+#if IS_ENABLED(CONFIG_NET_TC_THREAD_COOPERATIVE)
+#define THREAD_PRIORITY K_PRIO_COOP(CONFIG_NUM_COOP_PRIORITIES - 1)
+#else
+#define THREAD_PRIORITY K_PRIO_PREEMPT(8)
+#endif
 
 #define WPANUSB_SUBCLASS	0
 #define WPANUSB_PROTOCOL	0
@@ -28,7 +33,7 @@ LOG_MODULE_REGISTER(wpanusb);
 #define WPANUSB_IN_EP_IDX		0
 
 static struct ieee802154_radio_api *radio_api;
-static struct device *ieee802154_dev;
+static const struct device *ieee802154_dev;
 
 static struct k_fifo tx_queue;
 
@@ -44,7 +49,7 @@ static struct k_thread tx_thread_data;
 #define INITIALIZER_IF(num_ep, iface_class)				\
 	{								\
 		.bLength = sizeof(struct usb_if_descriptor),		\
-		.bDescriptorType = USB_INTERFACE_DESC,			\
+		.bDescriptorType = USB_DESC_INTERFACE,			\
 		.bInterfaceNumber = 0,					\
 		.bAlternateSetting = 0,					\
 		.bNumEndpoints = num_ep,				\
@@ -57,7 +62,7 @@ static struct k_thread tx_thread_data;
 #define INITIALIZER_IF_EP(addr, attr, mps, interval)			\
 	{								\
 		.bLength = sizeof(struct usb_ep_descriptor),		\
-		.bDescriptorType = USB_ENDPOINT_DESC,			\
+		.bDescriptorType = USB_DESC_ENDPOINT,			\
 		.bEndpointAddress = addr,				\
 		.bmAttributes = attr,					\
 		.wMaxPacketSize = sys_cpu_to_le16(mps),			\
@@ -68,7 +73,7 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct {
 	struct usb_if_descriptor if0;
 	struct usb_ep_descriptor if0_in_ep;
 } __packed wpanusb_desc = {
-	.if0 = INITIALIZER_IF(1, CUSTOM_CLASS),
+	.if0 = INITIALIZER_IF(1, USB_BCC_VENDOR),
 	.if0_in_ep = INITIALIZER_IF_EP(AUTO_EP_IN, USB_DC_EP_BULK,
 				       WPANUSB_BULK_EP_MPS, 0),
 };
@@ -126,6 +131,10 @@ static int wpanusb_vendor_handler(struct usb_setup_packet *setup,
 				  int32_t *len, uint8_t **data)
 {
 	struct net_pkt *pkt;
+
+	if (usb_reqtype_is_to_host(setup)) {
+		return -ENOTSUP;
+	}
 
 	/* Maximum 2 bytes are added to the len */
 	pkt = net_pkt_alloc_with_buffer(NULL, *len + 2, AF_UNSPEC, 0,
@@ -340,7 +349,7 @@ static void init_tx_queue(void)
 	k_thread_create(&tx_thread_data, tx_stack,
 			K_THREAD_STACK_SIZEOF(tx_stack),
 			(k_thread_entry_t)tx_thread,
-			NULL, NULL, NULL, K_PRIO_COOP(8), 0, K_NO_WAIT);
+			NULL, NULL, NULL, THREAD_PRIORITY, 0, K_NO_WAIT);
 }
 
 /**
@@ -400,6 +409,11 @@ out:
 	return ret;
 }
 
+enum net_verdict ieee802154_radio_handle_ack(struct net_if *iface, struct net_pkt *pkt)
+{
+	return NET_CONTINUE;
+}
+
 void main(void)
 {
 	int ret;
@@ -417,7 +431,7 @@ void main(void)
 	/* Initialize transmit queue */
 	init_tx_queue();
 
-	radio_api = (struct ieee802154_radio_api *)ieee802154_dev->driver_api;
+	radio_api = (struct ieee802154_radio_api *)ieee802154_dev->api;
 
 	ret = usb_enable(NULL);
 	if (ret != 0) {

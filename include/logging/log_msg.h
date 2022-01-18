@@ -9,6 +9,7 @@
 #include <sys/atomic.h>
 #include <sys/util.h>
 #include <string.h>
+#include <logging/log_msg2.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,9 +36,9 @@ typedef unsigned long log_arg_t;
 
 /** @brief Number of arguments in the log entry which fits in one chunk.*/
 #ifdef CONFIG_64BIT
-#define LOG_MSG_NARGS_SINGLE_CHUNK 4
+#define LOG_MSG_NARGS_SINGLE_CHUNK 4U
 #else
-#define LOG_MSG_NARGS_SINGLE_CHUNK 3
+#define LOG_MSG_NARGS_SINGLE_CHUNK 3U
 #endif
 
 /** @brief Number of arguments in the head of extended standard log message..*/
@@ -64,7 +65,7 @@ typedef unsigned long log_arg_t;
 #define ARGS_CONT_MSG (HEXDUMP_BYTES_CONT_MSG / sizeof(log_arg_t))
 
 /** @brief Flag indicating standard log message. */
-#define LOG_MSG_TYPE_STD 0
+#define LOG_MSG_TYPE_STD 0U
 
 /** @brief Flag indicating hexdump log message. */
 #define LOG_MSG_TYPE_HEXDUMP 1
@@ -465,6 +466,22 @@ static inline struct log_msg *log_msg_create_3(const char *str,
 struct log_msg *log_msg_create_n(const char *str,
 				 log_arg_t *args,
 				 uint32_t nargs);
+
+/**
+ * @brief Get number of free blocks from the log mem pool
+ */
+uint32_t log_msg_mem_get_free(void);
+
+/**
+ * @brief Get number of used blocks from the log mem pool
+ */
+uint32_t log_msg_mem_get_used(void);
+
+/**
+ * @brief Get max used blocks from the log mem pool
+ */
+uint32_t log_msg_mem_get_max_used(void);
+
 
 /**
  * @}

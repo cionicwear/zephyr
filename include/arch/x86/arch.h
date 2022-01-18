@@ -22,10 +22,26 @@
 #include <irq.h>
 #include <arch/x86/mmustructs.h>
 #include <arch/x86/thread_stack.h>
+#include <linker/sections.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#ifdef CONFIG_PCIE_MSI
+
+struct x86_msi_vector {
+	unsigned int irq;
+	uint8_t vector;
+#ifdef CONFIG_INTEL_VTD_ICTL
+	bool remap;
+	uint8_t irte;
+#endif
+};
+
+typedef struct x86_msi_vector arch_msi_vector_t;
+
+#endif /* CONFIG_PCIE_MSI */
 
 static ALWAYS_INLINE void arch_irq_unlock(unsigned int key)
 {
@@ -139,7 +155,7 @@ static ALWAYS_INLINE uint32_t sys_read32(mm_reg_t addr)
 static ALWAYS_INLINE void sys_set_bit(mem_addr_t addr, unsigned int bit)
 {
 	__asm__ volatile("btsl %1, %0"
-			 : "+m" (*(volatile uint32_t *) (addr))
+			 : "+m" (*(volatile uint8_t *) (addr))
 			 : "Ir" (bit)
 			 : "memory");
 }
@@ -147,7 +163,7 @@ static ALWAYS_INLINE void sys_set_bit(mem_addr_t addr, unsigned int bit)
 static ALWAYS_INLINE void sys_clear_bit(mem_addr_t addr, unsigned int bit)
 {
 	__asm__ volatile("btrl %1, %0"
-			 : "+m" (*(volatile uint32_t *) (addr))
+			 : "+m" (*(volatile uint8_t *) (addr))
 			 : "Ir" (bit));
 }
 
@@ -157,7 +173,7 @@ static ALWAYS_INLINE int sys_test_bit(mem_addr_t addr, unsigned int bit)
 
 	__asm__ volatile("btl %2, %1;"
 			 "sbb %0, %0"
-			 : "=r" (ret), "+m" (*(volatile uint32_t *) (addr))
+			 : "=r" (ret), "+m" (*(volatile uint8_t *) (addr))
 			 : "Ir" (bit));
 
 	return ret;
@@ -170,7 +186,7 @@ static ALWAYS_INLINE int sys_test_and_set_bit(mem_addr_t addr,
 
 	__asm__ volatile("btsl %2, %1;"
 			 "sbb %0, %0"
-			 : "=r" (ret), "+m" (*(volatile uint32_t *) (addr))
+			 : "=r" (ret), "+m" (*(volatile uint8_t *) (addr))
 			 : "Ir" (bit));
 
 	return ret;
@@ -183,7 +199,7 @@ static ALWAYS_INLINE int sys_test_and_clear_bit(mem_addr_t addr,
 
 	__asm__ volatile("btrl %2, %1;"
 			 "sbb %0, %0"
-			 : "=r" (ret), "+m" (*(volatile uint32_t *) (addr))
+			 : "=r" (ret), "+m" (*(volatile uint8_t *) (addr))
 			 : "Ir" (bit));
 
 	return ret;
@@ -231,11 +247,12 @@ extern "C" {
 extern void arch_irq_enable(unsigned int irq);
 extern void arch_irq_disable(unsigned int irq);
 
-extern uint32_t z_timer_cycle_get_32(void);
+extern uint32_t sys_clock_cycle_get_32(void);
 
+__pinned_func
 static inline uint32_t arch_k_cycle_get_32(void)
 {
-	return z_timer_cycle_get_32();
+	return sys_clock_cycle_get_32();
 }
 
 static ALWAYS_INLINE bool arch_irq_unlocked(unsigned int key)
@@ -260,6 +277,7 @@ static ALWAYS_INLINE uint32_t z_do_read_cpu_timestamp32(void)
  *  @brief read timestamp register ensuring serialization
  */
 
+__pinned_func
 static inline uint64_t z_tsc_read(void)
 {
 	union {
@@ -270,6 +288,16 @@ static inline uint64_t z_tsc_read(void)
 		uint64_t  value;
 	}  rv;
 
+#ifdef CONFIG_X86_64
+	/*
+	 * According to Intel 64 and IA-32 Architectures Software
+	 * Developer’s Manual, volume 3, chapter 8.2.5, LFENCE provides
+	 * a more efficient method of controlling memory ordering than
+	 * the CPUID instruction. So use LFENCE here, as all 64-bit
+	 * CPUs have LFENCE.
+	 */
+	__asm__ volatile ("lfence");
+#else
 	/* rdtsc & cpuid clobbers eax, ebx, ecx and edx registers */
 	__asm__ volatile (/* serialize */
 		"xorl %%eax,%%eax;"
@@ -278,11 +306,18 @@ static inline uint64_t z_tsc_read(void)
 		:
 		: "%eax", "%ebx", "%ecx", "%edx"
 		);
+#endif
+
+#ifdef CONFIG_X86_64
 	/*
 	 * We cannot use "=A", since this would use %rax on x86_64 and
 	 * return only the lower 32bits of the TSC
 	 */
 	__asm__ volatile ("rdtsc" : "=a" (rv.lo), "=d" (rv.hi));
+#else
+	/* "=A" means that value is in eax:edx pair. */
+	__asm__ volatile ("rdtsc" : "=A" (rv.value));
+#endif
 
 	return rv.value;
 }

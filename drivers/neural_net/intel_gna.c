@@ -13,11 +13,14 @@
  * Gaussian Mixture Model and Neural Network Accelerator (GNA)
  */
 
+#define DT_DRV_COMPAT intel_gna
+
 #include <kernel.h>
 #include <string.h>
 #include <device.h>
 #include <drivers/gna.h>
 
+#include <memory.h>
 #include "intel_gna.h"
 
 #define LOG_LEVEL CONFIG_NEURAL_NET_LOG_LEVEL
@@ -26,13 +29,13 @@ LOG_MODULE_REGISTER(neural_net);
 
 #define DEV_NAME(dev) ((dev)->name)
 #define DEV_CFG(dev) \
-	((const struct intel_gna_config *const)(dev)->config_info)
+	((const struct intel_gna_config *const)(dev)->config)
 #define DEV_DATA(dev) \
-	((struct intel_gna_data *const)(dev)->driver_data)
+	((struct intel_gna_data *const)(dev)->data)
 
 #if LOG_LEVEL >= LOG_LEVEL_DBG
-static void intel_gna_regs_dump(struct device *dev);
-static void intel_gna_config_desc_dump(struct device *dev);
+static void intel_gna_regs_dump(const struct device *dev);
+static void intel_gna_config_desc_dump(const struct device *dev);
 #define INTEL_GNA_REGS_DUMP(dev)	intel_gna_regs_dump((dev))
 #define INTEL_GNA_CONFIG_DESC_DUMP(dev)	intel_gna_config_desc_dump((dev))
 #else
@@ -48,7 +51,7 @@ static struct intel_gna_config_desc __aligned(GNA_PG_SIZE_IN_BYTES)
 static struct intel_gna_page_table __aligned(GNA_PG_SIZE_IN_BYTES)
 	gna_page_table[GNA_NUM_PG_TABLES_NEEDED];
 
-static void intel_gna_interrupt_handler(struct device *dev)
+static void intel_gna_interrupt_handler(const struct device *dev)
 {
 	struct intel_gna_data *const gna = DEV_DATA(dev);
 
@@ -165,7 +168,7 @@ static int intel_gna_setup_page_table(void *physical, size_t size,
 	return 0;
 }
 
-static int intel_gna_initialize(struct device *dev)
+static int intel_gna_initialize(const struct device *dev)
 {
 	struct intel_gna_data *const gna = DEV_DATA(dev);
 	uint32_t page_dir_entry;
@@ -210,7 +213,7 @@ static int intel_gna_initialize(struct device *dev)
 			DEV_NAME(dev), &gna_config_desc);
 
 	/* register interrupt handler */
-	IRQ_CONNECT(INTEL_GNA_IRQ_ID, INTEL_GNA_IRQ_PRIORITY,
+	IRQ_CONNECT(DT_INST_IRQN(0), DT_INST_IRQ(0, priority),
 			intel_gna_interrupt_handler, DEVICE_GET(gna), 0);
 	/* enable interrupt */
 	irq_enable(INTEL_GNA_IRQ_ID);
@@ -219,9 +222,9 @@ static int intel_gna_initialize(struct device *dev)
 	return 0;
 }
 
-static int intel_gna_configure(struct device *dev, struct gna_config *cfg)
+static int intel_gna_configure(const struct device *dev,
+			       struct gna_config *cfg)
 {
-	const struct intel_gna_config *const dev_cfg = DEV_CFG(dev);
 	struct intel_gna_data *const gna = DEV_DATA(dev);
 	volatile struct intel_gna_regs *regs = gna->regs;
 
@@ -236,7 +239,7 @@ static int intel_gna_configure(struct device *dev, struct gna_config *cfg)
 		return -EINVAL;
 	}
 
-	dev_cfg->config = *cfg;
+	gna->config = *cfg;
 
 	regs->gnactrl |= GNA_CTRL_OPER_MODEL_XNN |
 		GNA_CTRL_ERR_INTR_ENABLE | GNA_CTRL_COMPL_INTR_ENABLE;
@@ -275,13 +278,14 @@ static int intel_gna_configure(struct device *dev, struct gna_config *cfg)
 	return 0;
 }
 
-static int intel_gna_register_model(struct device *dev,
-		struct gna_model_info *model, void **model_handle)
+static int intel_gna_register_model(const struct device *dev,
+				    struct gna_model_info *model,
+				    void **model_handle)
 {
 	struct intel_gna_data *const gna = DEV_DATA(dev);
 	struct intel_gna_model *gna_model;
 	struct gna_model_header *header;
-	uint32_t ro_size, rw_size;
+	uint32_t ro_size, rw_size = 0;
 	void *virtual_base;
 	void *ro_region;
 
@@ -380,7 +384,8 @@ static int intel_gna_register_model(struct device *dev,
 	return 0;
 }
 
-static int intel_gna_deregister_model(struct device *dev, void *model_handle)
+static int intel_gna_deregister_model(const struct device *dev,
+				      void *model_handle)
 {
 	struct intel_gna_data *const gna = DEV_DATA(dev);
 	struct intel_gna_model *gna_model;
@@ -397,8 +402,9 @@ static int intel_gna_deregister_model(struct device *dev, void *model_handle)
 	return 0;
 }
 
-static int intel_gna_infer(struct device *dev, struct gna_inference_req *req,
-		gna_callback callback)
+static int intel_gna_infer(const struct device *dev,
+			   struct gna_inference_req *req,
+			   gna_callback callback)
 {
 	struct intel_gna_data *const gna = DEV_DATA(dev);
 	volatile struct intel_gna_regs *regs = gna->regs;
@@ -475,7 +481,7 @@ static int intel_gna_infer(struct device *dev, struct gna_inference_req *req,
 }
 
 #if LOG_LEVEL >= LOG_LEVEL_DBG
-static void intel_gna_regs_dump(struct device *dev)
+static void intel_gna_regs_dump(const struct device *dev)
 {
 	struct intel_gna_data *const gna = DEV_DATA(dev);
 	volatile struct intel_gna_regs *regs = gna->regs;
@@ -496,7 +502,7 @@ static void intel_gna_regs_dump(struct device *dev)
 	LOG_DBG("gnaversion :%08x", regs->gnaversion);
 }
 
-static void intel_gna_config_desc_dump(struct device *dev)
+static void intel_gna_config_desc_dump(const struct device *dev)
 {
 	struct intel_gna_data *const gna = DEV_DATA(dev);
 	volatile struct intel_gna_regs *regs = gna->regs;
@@ -514,12 +520,12 @@ static const struct gna_driver_api gna_driver_api = {
 	.infer			= intel_gna_infer,
 };
 
-static struct intel_gna_config intel_gna_config;
 static struct intel_gna_data intel_gna_driver_data = {
-	.regs = (volatile struct intel_gna_regs *)INTEL_GNA_BASE_ADDR,
+	.regs = (volatile struct intel_gna_regs *)DT_INST_REG_ADDR(0),
 };
 
-DEVICE_AND_API_INIT(gna, CONFIG_INTEL_GNA_NAME, intel_gna_initialize,
-		    (void *)&intel_gna_driver_data, &intel_gna_config,
-		    POST_KERNEL, CONFIG_INTEL_GNA_INIT_PRIORITY,
-		    &gna_driver_api);
+DEVICE_DT_INST_DEFINE(0, intel_gna_initialize,
+		      NULL,
+		      (void *)&intel_gna_driver_data, NULL,
+		      POST_KERNEL, CONFIG_INTEL_GNA_INIT_PRIORITY,
+		      &gna_driver_api);

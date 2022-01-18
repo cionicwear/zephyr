@@ -26,6 +26,24 @@ extern "C" {
  * @{
  */
 
+/**
+ * @brief IEEE 802.15.4 Channel assignments
+ *
+ * Channel numbering for 868 MHz, 915 MHz, and 2450 MHz bands.
+ *
+ * - Channel 0 is for 868.3 MHz.
+ * - Channels 1-10 are for 906 to 924 MHz with 2 MHz channel spacing.
+ * - Channels 11-26 are for 2405 to 2530 MHz with 5 MHz channel spacing.
+ *
+ * For more information, please refer to 802.15.4-2015 Section 10.1.2.2.
+ */
+enum ieee802154_channel {
+	IEEE802154_SUB_GHZ_CHANNEL_MIN = 0,
+	IEEE802154_SUB_GHZ_CHANNEL_MAX = 10,
+	IEEE802154_2_4_GHZ_CHANNEL_MIN = 11,
+	IEEE802154_2_4_GHZ_CHANNEL_MAX = 26,
+};
+
 enum ieee802154_hw_caps {
 	IEEE802154_HW_FCS	  = BIT(0), /* Frame Check-Sum supported */
 	IEEE802154_HW_PROMISC	  = BIT(1), /* Promiscuous mode supported */
@@ -36,6 +54,9 @@ enum ieee802154_hw_caps {
 	IEEE802154_HW_SUB_GHZ	  = BIT(6), /* Sub-GHz radio supported */
 	IEEE802154_HW_ENERGY_SCAN = BIT(7), /* Energy scan supported */
 	IEEE802154_HW_TXTIME	  = BIT(8), /* TX at specified time supported */
+	IEEE802154_HW_SLEEP_TO_TX = BIT(9), /* TX directly from sleep supported */
+	IEEE802154_HW_TX_SEC	  = BIT(10), /* TX security hadling supported */
+	IEEE802154_HW_RXTIME	  = BIT(11), /* RX at specified time supported */
 };
 
 enum ieee802154_filter_type {
@@ -47,12 +68,22 @@ enum ieee802154_filter_type {
 };
 
 enum ieee802154_event {
-	IEEE802154_EVENT_TX_STARTED /* Data transmission started */
+	IEEE802154_EVENT_TX_STARTED, /* Data transmission started */
+	IEEE802154_EVENT_RX_FAILED, /* Data reception failed */
+	IEEE802154_EVENT_SLEEP, /* Sleep pending */
 };
 
-typedef void (*energy_scan_done_cb_t)(struct device *dev, int16_t max_ed);
+enum ieee802154_rx_fail_reason {
+	IEEE802154_RX_FAIL_NOT_RECEIVED,  /* Nothing received */
+	IEEE802154_RX_FAIL_INVALID_FCS,   /* Frame had invalid checksum */
+	IEEE802154_RX_FAIL_ADDR_FILTERED, /* Address did not match */
+	IEEE802154_RX_FAIL_OTHER	  /* General reason */
+};
 
-typedef void (*ieee802154_event_cb_t)(struct device *dev,
+typedef void (*energy_scan_done_cb_t)(const struct device *dev,
+				      int16_t max_ed);
+
+typedef void (*ieee802154_event_cb_t)(const struct device *dev,
 				      enum ieee802154_event evt,
 				      void *event_params);
 
@@ -64,6 +95,14 @@ struct ieee802154_filter {
 		uint16_t pan_id;
 	};
 /* @endcond */
+};
+
+struct ieee802154_key {
+	uint8_t *key_value;
+	uint32_t key_frame_counter;
+	bool frame_counter_per_key;
+	uint8_t key_id_mode;
+	uint8_t key_index;
 };
 
 /** IEEE802.15.4 Transmission mode. */
@@ -122,7 +161,64 @@ enum ieee802154_config_type {
 	/** Specifies new radio event handler. Specifying NULL as a handler
 	 *  will disable radio events notification.
 	 */
-	IEEE802154_CONFIG_EVENT_HANDLER
+	IEEE802154_CONFIG_EVENT_HANDLER,
+
+	/** Updates MAC keys and key index for radios supporting transmit security. */
+	IEEE802154_CONFIG_MAC_KEYS,
+
+	/** Sets the current MAC frame counter value for radios supporting transmit security. */
+	IEEE802154_CONFIG_FRAME_COUNTER,
+
+	/** Configure a radio reception slot. This can be used for any scheduler reception, e.g.:
+	 *  Zigbee GP device, CSL, TSCH, etc.
+	 *
+	 *  In order to configure a CSL receiver the upper layer should combine several
+	 *  configuration options in the following way:
+	 *    1. Use ``IEEE802154_CONFIG_ENH_ACK_HEADER_IE`` once to inform the radio driver of the
+	 *  short and extended addresses of the peer to which it should inject CSL IEs.
+	 *    2. Use ``IEEE802154_CONFIG_CSL_RX_TIME`` periodically, before each use of
+	 *  ``IEEE802154_CONFIG_CSL_PERIOD`` setting parameters of the nearest CSL RX window, and
+	 *  before each use of IEEE_CONFIG_RX_SLOT setting parameters of the following (not the
+	 *  nearest one) CSL RX window, to allow the radio driver to calculate the proper CSL Phase
+	 *  to the nearest CSL window to inject in the CSL IEs for both transmitted data and ack
+	 *  frames.
+	 *    3. Use ``IEEE802154_CONFIG_CSL_PERIOD`` on each value change to update the current CSL
+	 *  period value which will be injected in the CSL IEs together with the CSL Phase based on
+	 *  ``IEEE802154_CONFIG_CSL_RX_TIME``.
+	 *    4. Use ``IEEE802154_CONFIG_RX_SLOT`` periodically to schedule the immediate receive
+	 *  window earlier enough before the expected window start time, taking into account
+	 *  possible clock drifts and scheduling uncertainties.
+	 *
+	 *  This diagram shows the usage of the four options over time:
+	 *        Start CSL                                  Schedule CSL window
+	 *
+	 *    ENH_ACK_HEADER_IE                        CSL_RX_TIME (following window)
+	 *         |                                        |
+	 *         | CSL_RX_TIME (nearest window)           | RX_SLOT (nearest window)
+	 *         |    |                                   |   |
+	 *         |    | CSL_PERIOD                        |   |
+	 *         |    |    |                              |   |
+	 *         v    v    v                              v   v
+	 *    ----------------------------------------------------------[ CSL window ]-----+
+	 *                                            ^                                    |
+	 *                                            |                                    |
+	 *                                            +--------------------- loop ---------+
+	 */
+	IEEE802154_CONFIG_RX_SLOT,
+
+	/** Configure CSL receiver (Endpoint) period */
+	IEEE802154_CONFIG_CSL_PERIOD,
+
+	/** Configure the next CSL receive window center, in units of microseconds,
+	 *  based on the radio time.
+	 */
+	IEEE802154_CONFIG_CSL_RX_TIME,
+
+	/** Indicates whether to inject IE into ENH ACK Frame for specific address
+	 *  or not. Disabling the ENH ACK with no address provided (NULL pointer)
+	 *  should disable it for all enabled addresses.
+	 */
+	IEEE802154_CONFIG_ENH_ACK_HEADER_IE,
 };
 
 /** IEEE802.15.4 driver configuration data. */
@@ -150,6 +246,50 @@ struct ieee802154_config {
 
 		/** ``IEEE802154_CONFIG_EVENT_HANDLER`` */
 		ieee802154_event_cb_t event_handler;
+
+		/** ``IEEE802154_CONFIG_MAC_KEYS``
+		 *  Pointer to an array containing a list of keys used
+		 *  for MAC encryption. Refer to secKeyIdLookupDescriptor and
+		 *  secKeyDescriptor in IEEE 802.15.4
+		 *
+		 *  key_value field points to a buffer containing the 16 byte
+		 *  key. The buffer is copied by the callee.
+		 *
+		 *  The variable length array is terminated by key_value field
+		 *  set to NULL.
+		 */
+		struct ieee802154_key *mac_keys;
+
+		/** ``IEEE802154_CONFIG_FRAME_COUNTER`` */
+		uint32_t frame_counter;
+
+		/** ``IEEE802154_CONFIG_RX_SLOT`` */
+		struct {
+			uint8_t channel;
+			uint32_t start;
+			uint32_t duration;
+		} rx_slot;
+
+		/** ``IEEE802154_CONFIG_CSL_PERIOD`` */
+		uint32_t csl_period;
+
+		/** ``IEEE802154_CONFIG_CSL_RX_TIME`` */
+		uint32_t csl_rx_time;
+
+		/** ``IEEE802154_CONFIG_ENH_ACK_HEADER_IE`` */
+		struct {
+			const uint8_t *data;
+			uint16_t data_len;
+			uint16_t short_addr;
+			/**
+			 * The extended address is expected to be passed starting
+			 * with the leftmost octet and ending with the rightmost octet.
+			 * A device with an extended address 01:23:45:67:89:ab:cd:ef
+			 * should provide a pointer to array containing values in the
+			 * same exact order.
+			 */
+			const uint8_t *ext_addr;
+		} ack_ie;
 	};
 };
 
@@ -167,50 +307,58 @@ struct ieee802154_radio_api {
 	struct net_if_api iface_api;
 
 	/** Get the device capabilities */
-	enum ieee802154_hw_caps (*get_capabilities)(struct device *dev);
+	enum ieee802154_hw_caps (*get_capabilities)(const struct device *dev);
 
 	/** Clear Channel Assesment - Check channel's activity */
-	int (*cca)(struct device *dev);
+	int (*cca)(const struct device *dev);
 
 	/** Set current channel */
-	int (*set_channel)(struct device *dev, uint16_t channel);
+	int (*set_channel)(const struct device *dev, uint16_t channel);
 
 	/** Set/Unset filters (for IEEE802154_HW_FILTER ) */
-	int (*filter)(struct device *dev,
+	int (*filter)(const struct device *dev,
 		      bool set,
 		      enum ieee802154_filter_type type,
 		      const struct ieee802154_filter *filter);
 
 	/** Set TX power level in dbm */
-	int (*set_txpower)(struct device *dev, int16_t dbm);
+	int (*set_txpower)(const struct device *dev, int16_t dbm);
 
 	/** Transmit a packet fragment */
-	int (*tx)(struct device *dev, enum ieee802154_tx_mode mode,
+	int (*tx)(const struct device *dev, enum ieee802154_tx_mode mode,
 		  struct net_pkt *pkt, struct net_buf *frag);
 
 	/** Start the device */
-	int (*start)(struct device *dev);
+	int (*start)(const struct device *dev);
 
 	/** Stop the device */
-	int (*stop)(struct device *dev);
+	int (*stop)(const struct device *dev);
 
 	/** Set specific radio driver configuration. */
-	int (*configure)(struct device *dev,
+	int (*configure)(const struct device *dev,
 			 enum ieee802154_config_type type,
 			 const struct ieee802154_config *config);
 
-#ifdef CONFIG_NET_L2_IEEE802154_SUB_GHZ
 	/** Get the available amount of Sub-GHz channels */
-	uint16_t (*get_subg_channel_count)(struct device *dev);
-#endif /* CONFIG_NET_L2_IEEE802154_SUB_GHZ */
+	uint16_t (*get_subg_channel_count)(const struct device *dev);
 
 	/** Run an energy detection scan.
 	 *  Note: channel must be set prior to request this function.
 	 *  duration parameter is in ms.
 	 */
-	int (*ed_scan)(struct device *dev,
+	int (*ed_scan)(const struct device *dev,
 		       uint16_t duration,
 		       energy_scan_done_cb_t done_cb);
+
+	/** Get the current radio time in microseconds */
+	uint64_t (*get_time)(const struct device *dev);
+
+	/** Get the current accuracy, in units of ± ppm, of the clock used for
+	 *  scheduling delayed receive or transmit radio operations.
+	 *  Note: Implementations may optimize this value based on operational
+	 *  conditions (i.e.: temperature).
+	 */
+	uint8_t (*get_sch_acc)(const struct device *dev);
 };
 
 /* Make sure that the network interface API is properly setup inside
@@ -246,17 +394,8 @@ static inline bool ieee802154_is_ar_flag_set(struct net_buf *frag)
  *
  * @return NET_OK if it was handled, NET_CONTINUE otherwise
  */
-#ifndef CONFIG_IEEE802154_RAW_MODE
 extern enum net_verdict ieee802154_radio_handle_ack(struct net_if *iface,
 						    struct net_pkt *pkt);
-#else /* CONFIG_IEEE802154_RAW_MODE */
-
-static inline enum net_verdict ieee802154_radio_handle_ack(struct net_if *iface,
-							   struct net_pkt *pkt)
-{
-	return NET_CONTINUE;
-}
-#endif /* CONFIG_IEEE802154_RAW_MODE */
 
 /**
  * @brief Initialize L2 stack for a given interface

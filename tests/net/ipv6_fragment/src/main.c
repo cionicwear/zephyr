@@ -926,14 +926,14 @@ enum net_test_type {
 
 static enum net_test_type test_type = NO_TEST_TYPE;
 
-static int net_iface_dev_init(struct device *dev)
+static int net_iface_dev_init(const struct device *dev)
 {
 	return 0;
 }
 
-static uint8_t *net_iface_get_mac(struct device *dev)
+static uint8_t *net_iface_get_mac(const struct device *dev)
 {
-	struct net_if_test *data = dev->driver_data;
+	struct net_if_test *data = dev->data;
 
 	if (data->mac_addr[2] == 0x00) {
 		/* 00-00-5E-00-53-xx Documentation RFC 7042 */
@@ -1328,7 +1328,7 @@ without:
 	return 0;
 }
 
-static int sender_iface(struct device *dev, struct net_pkt *pkt)
+static int sender_iface(const struct device *dev, struct net_pkt *pkt)
 {
 	if (!pkt->buffer) {
 		NET_DBG("No data to send!");
@@ -1366,7 +1366,7 @@ NET_DEVICE_INIT_INSTANCE(net_iface1_test,
 			 "iface1",
 			 iface1,
 			 net_iface_dev_init,
-			 device_pm_control_nop,
+			 NULL,
 			 &net_iface1_data,
 			 NULL,
 			 CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
@@ -1379,7 +1379,7 @@ NET_DEVICE_INIT_INSTANCE(net_iface2_test,
 			 "iface2",
 			 iface2,
 			 net_iface_dev_init,
-			 device_pm_control_nop,
+			 NULL,
 			 &net_iface2_data,
 			 NULL,
 			 CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
@@ -1429,7 +1429,7 @@ static void setup_udp_handler(const struct in6_addr *raddr,
 	remote_addr.sa_family = AF_INET6;
 
 	ret = net_udp_register(AF_INET6, &remote_addr, &local_addr,
-			       remote_port, local_port, udp_data_received,
+			       remote_port, local_port, NULL, udp_data_received,
 			       NULL, &handle);
 	zassert_equal(ret, 0, "Cannot register UDP handler");
 }
@@ -1445,9 +1445,9 @@ static void test_setup(void)
 	iface1 = net_if_get_by_index(1);
 	iface2 = net_if_get_by_index(2);
 
-	((struct net_if_test *)net_if_get_device(iface1)->driver_data)->idx =
+	((struct net_if_test *) net_if_get_device(iface1)->data)->idx =
 		net_if_get_by_iface(iface1);
-	((struct net_if_test *)net_if_get_device(iface2)->driver_data)->idx =
+	((struct net_if_test *) net_if_get_device(iface2)->data)->idx =
 		net_if_get_by_iface(iface2);
 
 	idx = net_if_get_by_iface(iface1);

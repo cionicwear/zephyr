@@ -27,6 +27,8 @@
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
 		zephyr,code-partition = &slot0_partition;
+		zephyr,code-cpu1-partition = &slot1_partition;
+		zephyr,sram-cpu1-partition = &sram3;
 		zephyr,console = &flexcomm0;
 		zephyr,shell-uart = &flexcomm0;
 		zephyr,entropy = &rng;
@@ -75,43 +77,77 @@
 
 &hs_lspi {
 	status = "okay";
+	dmas = <&dma0 2>, <&dma0 3>;
+	dma-names = "rx", "tx";
 };
 
-&flash0 {
-	/*
-	 * For more information, see:
-	 * http://docs.zephyrproject.org/latest/guides/dts/index.html#flash-partitions
-	 */
-	partitions {
-		compatible = "fixed-partitions";
-		#address-cells = <1>;
-		#size-cells = <1>;
+&wwdt0 {
+	status = "okay";
+};
 
-		boot_partition: partition@0 {
-			label = "mcuboot";
-			reg = <0x00000000 0x00010000>;
-			read-only;
-		};
-		/*
-		 * The flash starting at 0x10010000 and ending at
-		 * 0x1001ffff (sectors 16-31) is reserved for use
-		 * by the application.
-		 */
-		storage_partition: partition@1e000 {
-			label = "storage";
-			reg = <0x0001e000 0x00002000>;
-		};
-		slot0_partition: partition@20000 {
-			label = "image-0";
-			reg = <0x00020000 0x00020000>;
-		};
-		slot1_partition: partition@40000 {
-			label = "image-1";
-			reg = <0x00040000 0x00020000>;
-		};
-		scratch_partition: partition@60000 {
-			label = "image-scratch";
-			reg = <0x00060000 0x0003d800>;
-		};
-	};
+&adc0 {
+	status = "okay";
+};
+
+&dma0 {
+	/*
+	 * The total number of dma channels available is defined by
+	 * FSL_FEATURE_DMA_NUMBER_OF_CHANNELS in the SoC features file.
+	 * Since memory from the heap pool is allocated based on the number
+	 * of DMA channels, set this property to as many channels is needed
+	 * for the platform. Adjust HEAP_MEM_POOL_SIZE in case you need more
+	 * memory.
+	 */
+	dma-channels = <20>;
+	status = "okay";
+};
+
+&mailbox0 {
+	status = "okay";
+};
+
+zephyr_udc0: &usbhs {
+	status = "okay";
+};
+
+&ctimer0 {
+	status = "okay";
+};
+
+&ctimer1 {
+	status = "okay";
+};
+
+&ctimer2 {
+	status = "okay";
+};
+
+&ctimer3 {
+	status = "okay";
+};
+
+&ctimer4 {
+	status = "okay";
+};
+
+/* I2S receive channel */
+i2s0: &flexcomm6 {
+	status = "okay";
+	compatible = "nxp,lpc-i2s";
+	label = "I2S_0";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	dmas = <&dma0 16>;
+	dma-names = "rx";
+};
+
+/* I2S transmit channel */
+i2s1: &flexcomm7 {
+	status = "okay";
+	compatible = "nxp,lpc-i2s";
+	label = "I2S_1";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	dmas = <&dma0 19>;
+	dma-names = "tx";
 };

@@ -31,7 +31,11 @@
 
 #else
 
+#if defined(CONFIG_NET_DHCPV4)
+#define NET_EVENT_INFO_MAX_SIZE sizeof(struct net_if_dhcpv4)
+#else
 #define NET_EVENT_INFO_MAX_SIZE sizeof(struct net_event_ipv6_route)
+#endif
 
 #endif /* CONFIG_NET_L2_WIFI_MGMT */
 #endif /* CONFIG_NET_MGMT_EVENT_INFO */
@@ -43,9 +47,12 @@ extern void net_if_post_init(void);
 extern void net_if_carrier_down(struct net_if *iface);
 extern void net_if_stats_reset(struct net_if *iface);
 extern void net_if_stats_reset_all(void);
+extern void net_process_rx_packet(struct net_pkt *pkt);
+extern void net_process_tx_packet(struct net_pkt *pkt);
 
 #if defined(CONFIG_NET_NATIVE) || defined(CONFIG_NET_OFFLOAD)
 extern void net_context_init(void);
+extern const char *net_context_state(struct net_context *context);
 extern void net_pkt_init(void);
 extern void net_tc_tx_init(void);
 extern void net_tc_rx_init(void);
@@ -54,6 +61,11 @@ static inline void net_context_init(void) { }
 static inline void net_pkt_init(void) { }
 static inline void net_tc_tx_init(void) { }
 static inline void net_tc_rx_init(void) { }
+static inline const char *net_context_state(struct net_context *context)
+{
+	ARG_UNUSED(context);
+	return NULL;
+}
 #endif
 
 #if defined(CONFIG_NET_NATIVE)
@@ -85,23 +97,6 @@ char *net_sprint_addr(sa_family_t af, const void *addr);
 #define net_sprint_ipv4_addr(_addr) net_sprint_addr(AF_INET, _addr)
 
 #define net_sprint_ipv6_addr(_addr) net_sprint_addr(AF_INET6, _addr)
-
-#if defined(CONFIG_NET_CONTEXT_TIMESTAMP)
-int net_context_get_timestamp(struct net_context *context,
-			      struct net_pkt *pkt,
-			      struct net_ptp_time *timestamp);
-#else
-static inline int net_context_get_timestamp(struct net_context *context,
-					    struct net_pkt *pkt,
-					    struct net_ptp_time *timestamp)
-{
-	ARG_UNUSED(context);
-	ARG_UNUSED(pkt);
-	ARG_UNUSED(timestamp);
-
-	return -ENOTSUP;
-}
-#endif
 
 #if defined(CONFIG_COAP)
 /**
@@ -172,6 +167,15 @@ enum net_verdict net_context_packet_received(struct net_conn *conn,
 extern uint16_t net_calc_chksum_ipv4(struct net_pkt *pkt);
 #endif /* CONFIG_NET_IPV4 */
 
+#if defined(CONFIG_NET_IPV4_IGMP)
+uint16_t net_calc_chksum_igmp(uint8_t *data, size_t len);
+enum net_verdict net_ipv4_igmp_input(struct net_pkt *pkt,
+				     struct net_ipv4_hdr *ip_hdr);
+#else
+#define net_ipv4_igmp_input(...)
+#define net_calc_chksum_igmp(data, len) 0U
+#endif /* CONFIG_NET_IPV4_IGMP */
+
 static inline uint16_t net_calc_chksum_icmpv6(struct net_pkt *pkt)
 {
 	return net_calc_chksum(pkt, IPPROTO_ICMPV6);
@@ -225,7 +229,7 @@ static inline void net_pkt_hexdump(struct net_pkt *pkt, const char *str)
 	char pkt_str[sizeof("0x") + sizeof(intptr_t) * 2];
 
 	if (str && str[0]) {
-		LOG_DBG("%s", str);
+		LOG_DBG("%s", log_strdup(str));
 	}
 
 	snprintk(pkt_str, sizeof(pkt_str), "%p", pkt);
@@ -251,8 +255,8 @@ static inline void net_pkt_print_buffer_info(struct net_pkt *pkt, const char *st
 	}
 
 	while (buf) {
-		printk("%p[%d/%u (%u)]",
-		       buf, atomic_get(&pkt->atomic_ref), buf->len, buf->size);
+		printk("%p[%d/%u (%u/%u)]", buf, atomic_get(&pkt->atomic_ref),
+		       buf->len, net_buf_max_len(buf), buf->size);
 
 		buf = buf->frags;
 		if (buf) {

@@ -7,9 +7,11 @@
 #include <string.h>
 
 #include <zephyr.h>
-#include <sys/byteorder.h>
+#include <soc.h>
 #include <bluetooth/hci.h>
+#include <sys/byteorder.h>
 
+#include "hal/cpu.h"
 #include "hal/ccm.h"
 
 #include "util/util.h"
@@ -18,40 +20,46 @@
 #include "util/mayfly.h"
 
 #include "pdu.h"
-#include "ll.h"
 
 #include "lll.h"
+#include "lll/lll_adv_types.h"
 #include "lll_adv.h"
+#include "lll/lll_adv_pdu.h"
 #include "lll_scan.h"
+#include "lll/lll_df_types.h"
 #include "lll_conn.h"
 #include "lll_filter.h"
 
 #include "ull_adv_types.h"
 #include "ull_scan_types.h"
+#include "ull_conn_types.h"
 #include "ull_filter.h"
 
 #include "ull_internal.h"
 #include "ull_adv_internal.h"
 #include "ull_scan_internal.h"
+#include "ull_conn_internal.h"
 
-#define ADDR_TYPE_ANON 0xFF
+#include "ll.h"
 
 #define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_HCI_DRIVER)
 #define LOG_MODULE_NAME bt_ctlr_ull_filter
 #include "common/log.h"
 #include "hal/debug.h"
 
-/* Hardware whitelist */
-static struct lll_filter wl_filter;
-uint8_t wl_anon;
+#define ADDR_TYPE_ANON 0xFF
+
+/* Hardware Filter Accept List */
+static struct lll_filter fal_filter;
+uint8_t fal_anon;
 
 #define IRK_SIZE 16
 
 #if defined(CONFIG_BT_CTLR_PRIVACY)
 #include "common/rpa.h"
 
-/* Whitelist peer list */
-static struct lll_whitelist wl[WL_SIZE];
+/* Filter Accept List peer list */
+static struct lll_fal fal[FAL_SIZE];
 
 static uint8_t rl_enable;
 
@@ -91,7 +99,7 @@ static struct target_resolve_work t_work;
 
 BUILD_ASSERT(ARRAY_SIZE(prpa_cache) < FILTER_IDX_NONE);
 #endif /* CONFIG_BT_CTLR_SW_DEFERRED_PRIVACY */
-BUILD_ASSERT(ARRAY_SIZE(wl) < FILTER_IDX_NONE);
+BUILD_ASSERT(ARRAY_SIZE(fal) < FILTER_IDX_NONE);
 BUILD_ASSERT(ARRAY_SIZE(rl) < FILTER_IDX_NONE);
 
 /* Hardware filter for the resolving list */
@@ -101,17 +109,17 @@ static struct lll_filter rl_filter;
 static uint32_t rpa_timeout_ms;
 static int64_t rpa_last_ms;
 
-static struct k_delayed_work rpa_work;
+static struct k_work_delayable rpa_work;
 
 #define LIST_MATCH(list, i, type, addr) (list[i].taken && \
 		    (list[i].id_addr_type == (type & 0x1)) && \
 		    !memcmp(list[i].id_addr.val, addr, BDADDR_SIZE))
 
-static void wl_clear(void);
-static uint8_t wl_find(uint8_t addr_type, uint8_t *addr, uint8_t *free);
-static uint32_t wl_add(bt_addr_le_t *id_addr);
-static uint32_t wl_remove(bt_addr_le_t *id_addr);
-static void wl_update(void);
+static void fal_clear(void);
+static uint8_t fal_find(uint8_t addr_type, uint8_t *addr, uint8_t *free);
+static uint32_t fal_add(bt_addr_le_t *id_addr);
+static uint32_t fal_remove(bt_addr_le_t *id_addr);
+static void fal_update(void);
 
 static void rl_clear(void);
 static void rl_update(void);
@@ -134,6 +142,11 @@ static void filter_insert(struct lll_filter *filter, int index, uint8_t addr_typ
 			   uint8_t *bdaddr);
 static void filter_clear(struct lll_filter *filter);
 
+#if defined(CONFIG_BT_CTLR_PRIVACY) && \
+	defined(CONFIG_BT_CTLR_CHECK_SAME_PEER_CONN)
+static void conn_rpa_update(uint8_t rl_idx);
+#endif /* CONFIG_BT_CTLR_PRIVACY && CONFIG_BT_CTLR_CHECK_SAME_PEER_CONN */
+
 #if defined(CONFIG_BT_CTLR_SW_DEFERRED_PRIVACY)
 static void prpa_cache_clear(void);
 static uint8_t prpa_cache_find(bt_addr_t *prpa_cache_addr);
@@ -143,12 +156,12 @@ static void prpa_cache_resolve(struct k_work *work);
 static void target_resolve(struct k_work *work);
 #endif /* CONFIG_BT_CTLR_SW_DEFERRED_PRIVACY */
 
-uint8_t ll_wl_size_get(void)
+uint8_t ll_fal_size_get(void)
 {
-	return WL_SIZE;
+	return FAL_SIZE;
 }
 
-uint8_t ll_wl_clear(void)
+uint8_t ll_fal_clear(void)
 {
 #if defined(CONFIG_BT_BROADCASTER)
 	if (ull_adv_filter_pol_get(0)) {
@@ -163,17 +176,17 @@ uint8_t ll_wl_clear(void)
 #endif /* CONFIG_BT_OBSERVER */
 
 #if defined(CONFIG_BT_CTLR_PRIVACY)
-	wl_clear();
+	fal_clear();
 #else
-	filter_clear(&wl_filter);
+	filter_clear(&fal_filter);
 #endif /* CONFIG_BT_CTLR_PRIVACY */
 
-	wl_anon = 0U;
+	fal_anon = 0U;
 
 	return 0;
 }
 
-uint8_t ll_wl_add(bt_addr_le_t *addr)
+uint8_t ll_fal_add(bt_addr_le_t *addr)
 {
 #if defined(CONFIG_BT_BROADCASTER)
 	if (ull_adv_filter_pol_get(0)) {
@@ -188,18 +201,18 @@ uint8_t ll_wl_add(bt_addr_le_t *addr)
 #endif /* CONFIG_BT_OBSERVER */
 
 	if (addr->type == ADDR_TYPE_ANON) {
-		wl_anon = 1U;
+		fal_anon = 1U;
 		return 0;
 	}
 
 #if defined(CONFIG_BT_CTLR_PRIVACY)
-	return wl_add(addr);
+	return fal_add(addr);
 #else
-	return filter_add(&wl_filter, addr->type, addr->a.val);
+	return filter_add(&fal_filter, addr->type, addr->a.val);
 #endif /* CONFIG_BT_CTLR_PRIVACY */
 }
 
-uint8_t ll_wl_remove(bt_addr_le_t *addr)
+uint8_t ll_fal_remove(bt_addr_le_t *addr)
 {
 #if defined(CONFIG_BT_BROADCASTER)
 	if (ull_adv_filter_pol_get(0)) {
@@ -214,14 +227,14 @@ uint8_t ll_wl_remove(bt_addr_le_t *addr)
 #endif /* CONFIG_BT_OBSERVER */
 
 	if (addr->type == ADDR_TYPE_ANON) {
-		wl_anon = 0U;
+		fal_anon = 0U;
 		return 0;
 	}
 
 #if defined(CONFIG_BT_CTLR_PRIVACY)
-	return wl_remove(addr);
+	return fal_remove(addr);
 #else
-	return filter_remove(&wl_filter, addr->type, addr->a.val);
+	return filter_remove(&fal_filter, addr->type, addr->a.val);
 #endif /* CONFIG_BT_CTLR_PRIVACY */
 }
 
@@ -298,13 +311,13 @@ uint8_t ll_rl_add(bt_addr_le_t *id_addr, const uint8_t pirk[IRK_SIZE],
 #endif
 	/* Default to Network Privacy */
 	rl[i].dev = 0U;
-	/* Add reference to  a whitelist entry */
-	j = wl_find(id_addr->type, id_addr->a.val, NULL);
-	if (j < ARRAY_SIZE(wl)) {
-		wl[j].rl_idx = i;
-		rl[i].wl = 1U;
+	/* Add reference to  a Filter Accept List entry */
+	j = fal_find(id_addr->type, id_addr->a.val, NULL);
+	if (j < ARRAY_SIZE(fal)) {
+		fal[j].rl_idx = i;
+		rl[i].fal = 1U;
 	} else {
-		rl[i].wl = 0U;
+		rl[i].fal = 0U;
 	}
 	rl[i].taken = 1U;
 
@@ -345,10 +358,10 @@ uint8_t ll_rl_remove(bt_addr_le_t *id_addr)
 			peer_irk_count--;
 		}
 
-		/* Check if referenced by a whitelist entry */
-		j = wl_find(id_addr->type, id_addr->a.val, NULL);
-		if (j < ARRAY_SIZE(wl)) {
-			wl[j].rl_idx = FILTER_IDX_NONE;
+		/* Check if referenced by a Filter Accept List entry */
+		j = fal_find(id_addr->type, id_addr->a.val, NULL);
+		if (j < ARRAY_SIZE(fal)) {
+			fal[j].rl_idx = FILTER_IDX_NONE;
 		}
 		rl[i].taken = 0U;
 		return 0;
@@ -369,6 +382,9 @@ void ll_rl_crpa_set(uint8_t id_addr_type, uint8_t *id_addr, uint8_t rl_idx, uint
 		if (rl_idx < ARRAY_SIZE(rl) && rl[rl_idx].taken) {
 			memcpy(rl[rl_idx].curr_rpa.val, crpa,
 			       sizeof(bt_addr_t));
+#if defined(CONFIG_BT_CTLR_CHECK_SAME_PEER_CONN)
+			conn_rpa_update(rl_idx);
+#endif /* CONFIG_BT_CTLR_CHECK_SAME_PEER_CONN) */
 		}
 	}
 }
@@ -467,14 +483,14 @@ void ull_filter_adv_scan_state_cb(uint8_t bm)
 void ull_filter_adv_update(uint8_t adv_fp)
 {
 	/* Clear before populating filter */
-	filter_clear(&wl_filter);
+	filter_clear(&fal_filter);
 
 	/* enabling advertising */
 	if (adv_fp &&
 	    (!IS_ENABLED(CONFIG_BT_OBSERVER) ||
 	     !(ull_scan_filter_pol_get(0) & 0x1))) {
-		/* whitelist not in use, update whitelist */
-		wl_update();
+		/* filter accept list not in use, update FAL */
+		fal_update();
 	}
 
 	/* Clear before populating rl filter */
@@ -490,14 +506,14 @@ void ull_filter_adv_update(uint8_t adv_fp)
 void ull_filter_scan_update(uint8_t scan_fp)
 {
 	/* Clear before populating filter */
-	filter_clear(&wl_filter);
+	filter_clear(&fal_filter);
 
 	/* enabling advertising */
 	if ((scan_fp & 0x1) &&
 	    (!IS_ENABLED(CONFIG_BT_BROADCASTER) ||
 	     !ull_adv_filter_pol_get(0))) {
-		/* whitelist not in use, update whitelist */
-		wl_update();
+		/* Filter Accept List not in use, update FAL */
+		fal_update();
 	}
 
 	/* Clear before populating rl filter */
@@ -574,43 +590,29 @@ void ull_filter_rpa_update(bool timeout)
 }
 
 #if defined(CONFIG_BT_BROADCASTER)
-void ull_filter_adv_pdu_update(struct ll_adv_set *adv, struct pdu_adv *pdu)
+const uint8_t *ull_filter_adva_get(struct ll_adv_set *adv)
 {
-	uint8_t *adva = pdu->type == PDU_ADV_TYPE_SCAN_RSP ?
-				  &pdu->scan_rsp.addr[0] :
-				  &pdu->adv_ind.addr[0];
 	uint8_t idx = adv->lll.rl_idx;
 
 	/* AdvA */
 	if (idx < ARRAY_SIZE(rl) && rl[idx].lirk) {
 		LL_ASSERT(rl[idx].rpas_ready);
-		pdu->tx_addr = 1;
-		memcpy(adva, rl[idx].local_rpa->val, BDADDR_SIZE);
-	} else {
-		pdu->tx_addr = adv->own_addr_type & 0x1;
-#if defined(CONFIG_BT_CTLR_ADV_EXT)
-		if ((adv->is_created & ULL_ADV_CREATED_BITMASK_EXTENDED) &&
-		    pdu->tx_addr) {
-			ll_adv_aux_random_addr_get(adv, adva);
-		} else
-#endif /* CONFIG_BT_CTLR_ADV_EXT */
-		{
-			ll_addr_get(pdu->tx_addr, adva);
-		}
+		return rl[idx].local_rpa->val;
 	}
 
+	return NULL;
+}
+
+const uint8_t *ull_filter_tgta_get(struct ll_adv_set *adv)
+{
+	uint8_t idx = adv->lll.rl_idx;
+
 	/* TargetA */
-	if (pdu->type == PDU_ADV_TYPE_DIRECT_IND) {
-		if (idx < ARRAY_SIZE(rl) && rl[idx].pirk) {
-			pdu->rx_addr = 1;
-			memcpy(&pdu->direct_ind.tgt_addr[0],
-			       rl[idx].peer_rpa.val, BDADDR_SIZE);
-		} else {
-			pdu->rx_addr = adv->id_addr_type;
-			memcpy(&pdu->direct_ind.tgt_addr[0],
-			       adv->id_addr, BDADDR_SIZE);
-		}
+	if (idx < ARRAY_SIZE(rl) && rl[idx].pirk) {
+		return rl[idx].peer_rpa.val;
 	}
+
+	return NULL;
 }
 #endif /* CONFIG_BT_BROADCASTER */
 
@@ -637,10 +639,10 @@ uint8_t ull_filter_rl_find(uint8_t id_addr_type, uint8_t const *const id_addr,
 
 void ull_filter_reset(bool init)
 {
-	wl_anon = 0U;
+	fal_anon = 0U;
 
 #if defined(CONFIG_BT_CTLR_PRIVACY)
-	wl_clear();
+	fal_clear();
 
 	rl_enable = 0U;
 	rpa_timeout_ms = DEFAULT_RPA_TIMEOUT_MS;
@@ -650,16 +652,16 @@ void ull_filter_reset(bool init)
 	prpa_cache_clear();
 #endif
 	if (init) {
-		k_delayed_work_init(&rpa_work, rpa_timeout);
+		k_work_init_delayable(&rpa_work, rpa_timeout);
 #if defined(CONFIG_BT_CTLR_SW_DEFERRED_PRIVACY)
 		k_work_init(&(resolve_work.prpa_work), prpa_cache_resolve);
 		k_work_init(&(t_work.target_work), target_resolve);
 #endif
 	} else {
-		k_delayed_work_cancel(&rpa_work);
+		k_work_cancel_delayable(&rpa_work);
 	}
 #else
-	filter_clear(&wl_filter);
+	filter_clear(&fal_filter);
 #endif /* CONFIG_BT_CTLR_PRIVACY */
 }
 
@@ -685,14 +687,14 @@ uint8_t *ull_filter_lll_irks_get(uint8_t *count)
 	return (uint8_t *)peer_irks;
 }
 
-uint8_t ull_filter_lll_rl_idx(bool whitelist, uint8_t devmatch_id)
+uint8_t ull_filter_lll_rl_idx(bool filter, uint8_t devmatch_id)
 {
 	uint8_t i;
 
-	if (whitelist) {
-		LL_ASSERT(devmatch_id < ARRAY_SIZE(wl));
-		LL_ASSERT(wl[devmatch_id].taken);
-		i = wl[devmatch_id].rl_idx;
+	if (filter) {
+		LL_ASSERT(devmatch_id < ARRAY_SIZE(fal));
+		LL_ASSERT(fal[devmatch_id].taken);
+		i = fal[devmatch_id].rl_idx;
 	} else {
 		LL_ASSERT(devmatch_id < ARRAY_SIZE(rl));
 		i = devmatch_id;
@@ -714,7 +716,7 @@ uint8_t ull_filter_lll_rl_irk_idx(uint8_t irkmatch_id)
 	return i;
 }
 
-bool ull_filter_lll_irk_whitelisted(uint8_t rl_idx)
+bool ull_filter_lll_irk_in_fal(uint8_t rl_idx)
 {
 	if (rl_idx >= ARRAY_SIZE(rl)) {
 		return false;
@@ -722,27 +724,27 @@ bool ull_filter_lll_irk_whitelisted(uint8_t rl_idx)
 
 	LL_ASSERT(rl[rl_idx].taken);
 
-	return rl[rl_idx].wl;
+	return rl[rl_idx].fal;
 }
 #endif /* CONFIG_BT_CTLR_PRIVACY */
 
-struct lll_filter *ull_filter_lll_get(bool whitelist)
+struct lll_filter *ull_filter_lll_get(bool filter)
 {
 #if defined(CONFIG_BT_CTLR_PRIVACY)
-	if (whitelist) {
-		return &wl_filter;
+	if (filter) {
+		return &fal_filter;
 	}
 	return &rl_filter;
 #else
-	LL_ASSERT(whitelist);
-	return &wl_filter;
+	LL_ASSERT(filter);
+	return &fal_filter;
 #endif
 }
 
 #if defined(CONFIG_BT_CTLR_PRIVACY)
-struct lll_whitelist *ull_filter_lll_whitelist_get(void)
+struct lll_fal *ull_filter_lll_fal_get(void)
 {
-	return wl;
+	return fal;
 }
 
 struct lll_resolvelist *ull_filter_lll_resolvelist_get(void)
@@ -769,10 +771,10 @@ bool ull_filter_lll_rl_addr_allowed(uint8_t id_addr_type, uint8_t *id_addr, uint
 {
 	uint8_t i, j;
 
-	/* If AR is disabled or we matched an IRK then we're all set. No hw
+	/* We matched an IRK then we're all set. No hw
 	 * filters are used in this case.
 	 */
-	if (!rl_enable || *rl_idx != FILTER_IDX_NONE) {
+	if (*rl_idx != FILTER_IDX_NONE) {
 		return true;
 	}
 
@@ -819,16 +821,16 @@ bool ull_filter_lll_rl_enabled(void)
 #if defined(CONFIG_BT_CTLR_SW_DEFERRED_PRIVACY)
 uint8_t ull_filter_deferred_resolve(bt_addr_t *rpa, resolve_callback_t cb)
 {
-	LL_ASSERT(rl_enable);
+	if (rl_enable) {
+		if (!k_work_is_pending(&(resolve_work.prpa_work))) {
+			/* copy input param to work variable */
+			memcpy(resolve_work.rpa.val, rpa->val, sizeof(bt_addr_t));
+			resolve_work.cb = cb;
 
-	if (!k_work_pending(&(resolve_work.prpa_work))) {
-		/* copy input param to work variable */
-		memcpy(resolve_work.rpa.val, rpa->val, sizeof(bt_addr_t));
-		resolve_work.cb = cb;
+			k_work_submit(&(resolve_work.prpa_work));
 
-		k_work_submit(&(resolve_work.prpa_work));
-
-		return 1;
+			return 1;
+		}
 	}
 
 	return 0;
@@ -837,120 +839,120 @@ uint8_t ull_filter_deferred_resolve(bt_addr_t *rpa, resolve_callback_t cb)
 uint8_t ull_filter_deferred_targeta_resolve(bt_addr_t *rpa, uint8_t rl_idx,
 					 resolve_callback_t cb)
 {
-	LL_ASSERT(rl_enable);
+	if (rl_enable) {
+		if (!k_work_is_pending(&(t_work.target_work))) {
+			/* copy input param to work variable */
+			memcpy(t_work.rpa.val, rpa->val, sizeof(bt_addr_t));
+			t_work.cb = cb;
+			t_work.idx = rl_idx;
 
-	if (!k_work_pending(&(t_work.target_work))) {
-		/* copy input param to work variable */
-		memcpy(t_work.rpa.val, rpa->val, sizeof(bt_addr_t));
-		t_work.cb = cb;
-		t_work.idx = rl_idx;
+			k_work_submit(&(t_work.target_work));
 
-		k_work_submit(&(t_work.target_work));
-
-		return 1;
+			return 1;
+		}
 	}
-
 	return 0;
 }
 #endif /* CONFIG_BT_CTLR_SW_DEFERRED_PRIVACY */
 
-static void wl_clear(void)
+static void fal_clear(void)
 {
-	for (int i = 0; i < WL_SIZE; i++) {
-		uint8_t j = wl[i].rl_idx;
+	for (int i = 0; i < FAL_SIZE; i++) {
+		uint8_t j = fal[i].rl_idx;
 
 		if (j < ARRAY_SIZE(rl)) {
-			rl[j].wl = 0U;
+			rl[j].fal = 0U;
 		}
-		wl[i].taken = 0U;
+		fal[i].taken = 0U;
 	}
 }
 
-static uint8_t wl_find(uint8_t addr_type, uint8_t *addr, uint8_t *free)
+static uint8_t fal_find(uint8_t addr_type, uint8_t *addr, uint8_t *free_idx)
 {
 	int i;
 
-	if (free) {
-		*free = FILTER_IDX_NONE;
+	if (free_idx) {
+		*free_idx = FILTER_IDX_NONE;
 	}
 
-	for (i = 0; i < WL_SIZE; i++) {
-		if (LIST_MATCH(wl, i, addr_type, addr)) {
+	for (i = 0; i < FAL_SIZE; i++) {
+		if (LIST_MATCH(fal, i, addr_type, addr)) {
 			return i;
-		} else if (free && !wl[i].taken && (*free == FILTER_IDX_NONE)) {
-			*free = i;
+		} else if (free_idx && !fal[i].taken &&
+			   (*free_idx == FILTER_IDX_NONE)) {
+			*free_idx = i;
 		}
 	}
 
 	return FILTER_IDX_NONE;
 }
 
-static uint32_t wl_add(bt_addr_le_t *id_addr)
+static uint32_t fal_add(bt_addr_le_t *id_addr)
 {
 	uint8_t i, j;
 
-	i = wl_find(id_addr->type, id_addr->a.val, &j);
+	i = fal_find(id_addr->type, id_addr->a.val, &j);
 
 	/* Duplicate  check */
-	if (i < ARRAY_SIZE(wl)) {
+	if (i < ARRAY_SIZE(fal)) {
 		return 0;
-	} else if (j >= ARRAY_SIZE(wl)) {
+	} else if (j >= ARRAY_SIZE(fal)) {
 		return BT_HCI_ERR_MEM_CAPACITY_EXCEEDED;
 	}
 
 	i = j;
 
-	wl[i].id_addr_type = id_addr->type & 0x1;
-	bt_addr_copy(&wl[i].id_addr, &id_addr->a);
+	fal[i].id_addr_type = id_addr->type & 0x1;
+	bt_addr_copy(&fal[i].id_addr, &id_addr->a);
 	/* Get index to Resolving List if applicable */
 	j = ull_filter_rl_find(id_addr->type, id_addr->a.val, NULL);
 	if (j < ARRAY_SIZE(rl)) {
-		wl[i].rl_idx = j;
-		rl[j].wl = 1U;
+		fal[i].rl_idx = j;
+		rl[j].fal = 1U;
 	} else {
-		wl[i].rl_idx = FILTER_IDX_NONE;
+		fal[i].rl_idx = FILTER_IDX_NONE;
 	}
-	wl[i].taken = 1U;
+	fal[i].taken = 1U;
 
 	return 0;
 }
 
-static uint32_t wl_remove(bt_addr_le_t *id_addr)
+static uint32_t fal_remove(bt_addr_le_t *id_addr)
 {
 	/* find the device and mark it as empty */
-	uint8_t i = wl_find(id_addr->type, id_addr->a.val, NULL);
+	uint8_t i = fal_find(id_addr->type, id_addr->a.val, NULL);
 
-	if (i < ARRAY_SIZE(wl)) {
-		uint8_t j = wl[i].rl_idx;
+	if (i < ARRAY_SIZE(fal)) {
+		uint8_t j = fal[i].rl_idx;
 
 		if (j < ARRAY_SIZE(rl)) {
-			rl[j].wl = 0U;
+			rl[j].fal = 0U;
 		}
-		wl[i].taken = 0U;
+		fal[i].taken = 0U;
 		return 0;
 	}
 
 	return BT_HCI_ERR_UNKNOWN_CONN_ID;
 }
 
-static void wl_update(void)
+static void fal_update(void)
 {
 	uint8_t i;
 
-	/* Populate filter from wl peers */
-	for (i = 0U; i < WL_SIZE; i++) {
+	/* Populate filter from fal peers */
+	for (i = 0U; i < FAL_SIZE; i++) {
 		uint8_t j;
 
-		if (!wl[i].taken) {
+		if (!fal[i].taken) {
 			continue;
 		}
 
-		j = wl[i].rl_idx;
+		j = fal[i].rl_idx;
 
 		if (!rl_enable || j >= ARRAY_SIZE(rl) || !rl[j].pirk ||
 		    rl[j].dev) {
-			filter_insert(&wl_filter, i, wl[i].id_addr_type,
-				      wl[i].id_addr.val);
+			filter_insert(&fal_filter, i, fal[i].id_addr_type,
+				      fal[i].id_addr.val);
 		}
 	}
 }
@@ -986,20 +988,9 @@ static void rpa_adv_refresh(struct ll_adv_set *adv)
 
 	prev = lll_adv_data_peek(&adv->lll);
 	pdu = lll_adv_data_alloc(&adv->lll, &idx);
-	pdu->type = prev->type;
-	pdu->rfu = 0;
 
-	if (IS_ENABLED(CONFIG_BT_CTLR_CHAN_SEL_2)) {
-		pdu->chan_sel = prev->chan_sel;
-	} else {
-		pdu->chan_sel = 0;
-	}
-
-	ull_filter_adv_pdu_update(adv, pdu);
-
-	memcpy(&pdu->adv_ind.data[0], &prev->adv_ind.data[0],
-	       prev->len - BDADDR_SIZE);
-	pdu->len = prev->len;
+	memcpy(pdu, prev, PDU_AC_LL_HEADER_SIZE + prev->len);
+	ull_adv_pdu_update_addrs(adv, pdu);
 
 	lll_adv_data_enqueue(&adv->lll, idx);
 }
@@ -1023,26 +1014,30 @@ static int rl_access_check(bool check_ar)
 		}
 	}
 
+	/* NOTE: Allowed when passive scanning, otherwise deny if advertising,
+	 *       active scanning, initiating or periodic sync create is active.
+	 */
 	return ((IS_ENABLED(CONFIG_BT_BROADCASTER) && ull_adv_is_enabled(0)) ||
-		(IS_ENABLED(CONFIG_BT_OBSERVER) && ull_scan_is_enabled(0)))
+		(IS_ENABLED(CONFIG_BT_OBSERVER) &&
+		 (ull_scan_is_enabled(0) & ~ULL_SCAN_IS_PASSIVE)))
 		? 0 : 1;
 }
 
 static void rpa_timeout(struct k_work *work)
 {
 	ull_filter_rpa_update(true);
-	k_delayed_work_submit(&rpa_work, K_MSEC(rpa_timeout_ms));
+	k_work_schedule(&rpa_work, K_MSEC(rpa_timeout_ms));
 }
 
 static void rpa_refresh_start(void)
 {
 	BT_DBG("");
-	k_delayed_work_submit(&rpa_work, K_MSEC(rpa_timeout_ms));
+	k_work_schedule(&rpa_work, K_MSEC(rpa_timeout_ms));
 }
 
 static void rpa_refresh_stop(void)
 {
-	k_delayed_work_cancel(&rpa_work);
+	k_work_cancel_delayable(&rpa_work);
 }
 
 #else /* !CONFIG_BT_CTLR_PRIVACY */
@@ -1052,7 +1047,7 @@ static uint32_t filter_add(struct lll_filter *filter, uint8_t addr_type,
 {
 	int index;
 
-	if (filter->enable_bitmask == 0xFF) {
+	if (filter->enable_bitmask == LLL_FILTER_BITMASK_ALL) {
 		return BT_HCI_ERR_MEM_CAPACITY_EXCEEDED;
 	}
 
@@ -1074,7 +1069,7 @@ static uint32_t filter_remove(struct lll_filter *filter, uint8_t addr_type,
 		return BT_HCI_ERR_INVALID_PARAM;
 	}
 
-	index = 8;
+	index = FAL_SIZE;
 	while (index--) {
 		if ((filter->enable_bitmask & BIT(index)) &&
 		    (((filter->addr_type_bitmask >> index) & 0x01) ==
@@ -1103,6 +1098,28 @@ static void filter_clear(struct lll_filter *filter)
 	filter->enable_bitmask = 0;
 	filter->addr_type_bitmask = 0;
 }
+
+#if defined(CONFIG_BT_CTLR_PRIVACY) && \
+	defined(CONFIG_BT_CTLR_CHECK_SAME_PEER_CONN)
+static void conn_rpa_update(uint8_t rl_idx)
+{
+	uint16_t handle;
+
+	for (handle = 0U; handle < CONFIG_BT_MAX_CONN; handle++) {
+		struct ll_conn *conn = ll_connected_get(handle);
+
+		/* The RPA of the connection matches the RPA that was just
+		 * resolved
+		 */
+		if (conn && !memcmp(conn->peer_id_addr, rl[rl_idx].curr_rpa.val,
+				    BDADDR_SIZE)) {
+			(void)memcpy(conn->peer_id_addr, rl[rl_idx].id_addr.val,
+				     BDADDR_SIZE);
+			break;
+		}
+	}
+}
+#endif /* CONFIG_BT_CTLR_PRIVACY && CONFIG_BT_CTLR_CHECK_SAME_PEER_CONN */
 
 #if defined(CONFIG_BT_CTLR_SW_DEFERRED_PRIVACY)
 static void target_resolve(struct k_work *work)
@@ -1139,8 +1156,8 @@ static void target_resolve(struct k_work *work)
 	if (twork->cb) {
 		mfy.fp = twork->cb;
 		mfy.param = (void *) ((unsigned int) j);
-		mayfly_enqueue(TICKER_USER_ID_THREAD,
-			       TICKER_USER_ID_LLL, 1, &mfy);
+		(void)mayfly_enqueue(TICKER_USER_ID_THREAD,
+				     TICKER_USER_ID_LLL, 1, &mfy);
 	}
 }
 
@@ -1192,6 +1209,9 @@ static void prpa_cache_resolve(struct k_work *work)
 			 */
 			memcpy(rl[j].curr_rpa.val, search_rpa->val,
 			       sizeof(bt_addr_t));
+#if defined(CONFIG_BT_CTLR_CHECK_SAME_PEER_CONN)
+			conn_rpa_update(j);
+#endif /* CONFIG_BT_CTLR_CHECK_SAME_PEER_CONN */
 		}
 
 	} else {
@@ -1206,8 +1226,8 @@ static void prpa_cache_resolve(struct k_work *work)
 	if (rwork->cb) {
 		mfy.fp = rwork->cb;
 		mfy.param = (void *) ((unsigned int) j);
-		mayfly_enqueue(TICKER_USER_ID_THREAD,
-			       TICKER_USER_ID_LLL, 1, &mfy);
+		(void)mayfly_enqueue(TICKER_USER_ID_THREAD,
+				     TICKER_USER_ID_LLL, 1, &mfy);
 	}
 }
 

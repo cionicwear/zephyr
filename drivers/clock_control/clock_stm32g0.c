@@ -8,13 +8,16 @@
 
 
 #include <soc.h>
+#include <stm32_ll_bus.h>
+#include <stm32_ll_rcc.h>
+#include <stm32_ll_utils.h>
 #include <drivers/clock_control.h>
 #include <sys/util.h>
 #include <drivers/clock_control/stm32_clock_control.h>
 #include "clock_stm32_ll_common.h"
 
 
-#ifdef CONFIG_CLOCK_STM32_SYSCLK_SRC_PLL
+#if STM32_SYSCLK_SRC_PLL
 
 /* Macros to fill up multiplication and division factors values */
 #define z_pll_div(v) LL_RCC_PLLM_DIV_ ## v
@@ -28,18 +31,19 @@
  */
 void config_pll_init(LL_UTILS_PLLInitTypeDef *pllinit)
 {
-	pllinit->PLLN = CONFIG_CLOCK_STM32_PLL_N_MULTIPLIER;
-	pllinit->PLLM = pll_div(CONFIG_CLOCK_STM32_PLL_M_DIVISOR);
-	pllinit->PLLR = pllr(CONFIG_CLOCK_STM32_PLL_R_DIVISOR);
+	pllinit->PLLN = STM32_PLL_N_MULTIPLIER;
+	pllinit->PLLM = pll_div(STM32_PLL_M_DIVISOR);
+	pllinit->PLLR = pllr(STM32_PLL_R_DIVISOR);
 }
-#endif /* CONFIG_CLOCK_STM32_SYSCLK_SRC_PLL */
+#endif /* STM32_SYSCLK_SRC_PLL */
 
 /**
  * @brief Activate default clocks
  */
 void config_enable_default_clocks(void)
 {
-	/* Do nothing */
+	/* Enable the power interface clock */
+	LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_PWR);
 }
 
 /**

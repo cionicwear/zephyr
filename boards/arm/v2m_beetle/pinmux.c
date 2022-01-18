@@ -12,8 +12,6 @@
 #include <sys/sys_io.h>
 #include <gpio/gpio_cmsdk_ahb.h>
 
-#include "pinmux/pinmux.h"
-
 /**
  * @brief Pinmux driver for ARM V2M Beetle Board
  *
@@ -135,7 +133,7 @@ static void arm_v2m_beetle_pinmux_defaults(void)
 	CMSDK_AHB_GPIO1_DEV->data |= (0x1 << 15);
 }
 
-static int arm_v2m_beetle_pinmux_init(struct device *port)
+static int arm_v2m_beetle_pinmux_init(const struct device *port)
 {
 	ARG_UNUSED(port);
 

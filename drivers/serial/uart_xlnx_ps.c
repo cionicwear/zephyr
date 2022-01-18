@@ -152,9 +152,9 @@ struct uart_xlnx_ps_dev_data_t {
 
 #define DEV_CFG(dev) \
 	((const struct uart_xlnx_ps_dev_config * const) \
-	 (dev)->config_info)
+	 (dev)->config)
 #define DEV_DATA(dev) \
-	((struct uart_xlnx_ps_dev_data_t *)(dev)->driver_data)
+	((struct uart_xlnx_ps_dev_data_t *)(dev)->data)
 
 static const struct uart_driver_api uart_xlnx_ps_driver_api;
 
@@ -222,7 +222,7 @@ static void xlnx_ps_enable_uart(uint32_t reg_base)
  * @param dev UART device struct
  * @param baud_rate The desired baud rate as a decimal value
  */
-static void set_baudrate(struct device *dev, uint32_t baud_rate)
+static void set_baudrate(const struct device *dev, uint32_t baud_rate)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t divisor, generator;
@@ -281,7 +281,7 @@ static void set_baudrate(struct device *dev, uint32_t baud_rate)
  *
  * @return 0 if successful, failed otherwise
  */
-static int uart_xlnx_ps_init(struct device *dev)
+static int uart_xlnx_ps_init(const struct device *dev)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_val;
@@ -335,7 +335,7 @@ static int uart_xlnx_ps_init(struct device *dev)
  *
  * @return 0 if a character arrived, -1 if the input buffer if empty.
  */
-static int uart_xlnx_ps_poll_in(struct device *dev, unsigned char *c)
+static int uart_xlnx_ps_poll_in(const struct device *dev, unsigned char *c)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_val;
@@ -366,7 +366,7 @@ static int uart_xlnx_ps_poll_in(struct device *dev, unsigned char *c)
  *
  * @return Sent character
  */
-static void uart_xlnx_ps_poll_out(struct device *dev, unsigned char c)
+static void uart_xlnx_ps_poll_out(const struct device *dev, unsigned char c)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_val;
@@ -583,6 +583,7 @@ static inline bool uart_xlnx_ps_cfg2ll_hwctrl(
 	return true;
 }
 
+#ifdef CONFIG_UART_USE_RUNTIME_CONFIGURE
 /**
  * @brief Configures the UART device at run-time.
  *
@@ -595,8 +596,8 @@ static inline bool uart_xlnx_ps_cfg2ll_hwctrl(
  * @return 0 if the configuration completed successfully, ENOTSUP
  *         error if an unsupported configuration parameter is detected.
  */
-static int uart_xlnx_ps_configure(struct device *dev,
-	const struct uart_config *cfg)
+static int uart_xlnx_ps_configure(const struct device *dev,
+				  const struct uart_config *cfg)
 {
 	struct uart_xlnx_ps_dev_config *dev_cfg =
 	(struct uart_xlnx_ps_dev_config *)DEV_CFG(dev);
@@ -639,6 +640,7 @@ static int uart_xlnx_ps_configure(struct device *dev,
 
 	return 0;
 };
+#endif /* CONFIG_UART_USE_RUNTIME_CONFIGURE */
 
 /**
  * @brief Converts a Mode Register bit mask to a parity configuration
@@ -787,6 +789,7 @@ static inline enum uart_config_flow_control uart_xlnx_ps_ll2cfg_hwctrl(
 	return UART_CFG_FLOW_CTRL_NONE;
 }
 
+#ifdef CONFIG_UART_USE_RUNTIME_CONFIGURE
 /**
  * @brief Returns the current configuration of the UART at run-time.
  *
@@ -800,8 +803,8 @@ static inline enum uart_config_flow_control uart_xlnx_ps_ll2cfg_hwctrl(
  *
  * @return always 0.
  */
-static int uart_xlnx_ps_config_get(struct device *dev,
-	struct uart_config *cfg)
+static int uart_xlnx_ps_config_get(const struct device *dev,
+				   struct uart_config *cfg)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 
@@ -824,6 +827,7 @@ static int uart_xlnx_ps_config_get(struct device *dev,
 
 	return 0;
 }
+#endif /* CONFIG_UART_USE_RUNTIME_CONFIGURE */
 
 #if CONFIG_UART_INTERRUPT_DRIVEN
 
@@ -836,7 +840,8 @@ static int uart_xlnx_ps_config_get(struct device *dev,
  *
  * @return Number of bytes sent
  */
-static int uart_xlnx_ps_fifo_fill(struct device *dev, const uint8_t *tx_data,
+static int uart_xlnx_ps_fifo_fill(const struct device *dev,
+				  const uint8_t *tx_data,
 				  int size)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
@@ -865,7 +870,7 @@ static int uart_xlnx_ps_fifo_fill(struct device *dev, const uint8_t *tx_data,
  *
  * @return Number of bytes read
  */
-static int uart_xlnx_ps_fifo_read(struct device *dev, uint8_t *rx_data,
+static int uart_xlnx_ps_fifo_read(const struct device *dev, uint8_t *rx_data,
 				  const int size)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
@@ -893,7 +898,7 @@ static int uart_xlnx_ps_fifo_read(struct device *dev, uint8_t *rx_data,
  *
  * @return N/A
  */
-static void uart_xlnx_ps_irq_tx_enable(struct device *dev)
+static void uart_xlnx_ps_irq_tx_enable(const struct device *dev)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_base;
@@ -911,7 +916,7 @@ static void uart_xlnx_ps_irq_tx_enable(struct device *dev)
  *
  * @return N/A
  */
-static void uart_xlnx_ps_irq_tx_disable(struct device *dev)
+static void uart_xlnx_ps_irq_tx_disable(const struct device *dev)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_base;
@@ -929,7 +934,7 @@ static void uart_xlnx_ps_irq_tx_disable(struct device *dev)
  *
  * @return 1 if an IRQ is ready, 0 otherwise
  */
-static int uart_xlnx_ps_irq_tx_ready(struct device *dev)
+static int uart_xlnx_ps_irq_tx_ready(const struct device *dev)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_base;
@@ -954,7 +959,7 @@ static int uart_xlnx_ps_irq_tx_ready(struct device *dev)
  *
  * @return 1 if nothing remains to be transmitted, 0 otherwise
  */
-static int uart_xlnx_ps_irq_tx_complete(struct device *dev)
+static int uart_xlnx_ps_irq_tx_complete(const struct device *dev)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_base;
@@ -976,7 +981,7 @@ static int uart_xlnx_ps_irq_tx_complete(struct device *dev)
  *
  * @return N/A
  */
-static void uart_xlnx_ps_irq_rx_enable(struct device *dev)
+static void uart_xlnx_ps_irq_rx_enable(const struct device *dev)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_base;
@@ -992,7 +997,7 @@ static void uart_xlnx_ps_irq_rx_enable(struct device *dev)
  *
  * @return N/A
  */
-static void uart_xlnx_ps_irq_rx_disable(struct device *dev)
+static void uart_xlnx_ps_irq_rx_disable(const struct device *dev)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_base;
@@ -1008,7 +1013,7 @@ static void uart_xlnx_ps_irq_rx_disable(struct device *dev)
  *
  * @return 1 if an IRQ is ready, 0 otherwise
  */
-static int uart_xlnx_ps_irq_rx_ready(struct device *dev)
+static int uart_xlnx_ps_irq_rx_ready(const struct device *dev)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_base;
@@ -1031,7 +1036,7 @@ static int uart_xlnx_ps_irq_rx_ready(struct device *dev)
  *
  * @return N/A
  */
-static void uart_xlnx_ps_irq_err_enable(struct device *dev)
+static void uart_xlnx_ps_irq_err_enable(const struct device *dev)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_base;
@@ -1053,7 +1058,7 @@ static void uart_xlnx_ps_irq_err_enable(struct device *dev)
  *
  * @return 1 if an IRQ is ready, 0 otherwise
  */
-static void uart_xlnx_ps_irq_err_disable(struct device *dev)
+static void uart_xlnx_ps_irq_err_disable(const struct device *dev)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_base;
@@ -1075,7 +1080,7 @@ static void uart_xlnx_ps_irq_err_disable(struct device *dev)
  *
  * @return 1 if an IRQ is pending, 0 otherwise
  */
-static int uart_xlnx_ps_irq_is_pending(struct device *dev)
+static int uart_xlnx_ps_irq_is_pending(const struct device *dev)
 {
 	const struct uart_xlnx_ps_dev_config *dev_cfg = DEV_CFG(dev);
 	uint32_t reg_base;
@@ -1100,7 +1105,7 @@ static int uart_xlnx_ps_irq_is_pending(struct device *dev)
  *
  * @return Always 1
  */
-static int uart_xlnx_ps_irq_update(struct device *dev)
+static int uart_xlnx_ps_irq_update(const struct device *dev)
 {
 	(void)dev;
 	return 1;
@@ -1114,7 +1119,7 @@ static int uart_xlnx_ps_irq_update(struct device *dev)
  *
  * @return N/A
  */
-static void uart_xlnx_ps_irq_callback_set(struct device *dev,
+static void uart_xlnx_ps_irq_callback_set(const struct device *dev,
 					    uart_irq_callback_user_data_t cb,
 					    void *cb_data)
 {
@@ -1133,13 +1138,12 @@ static void uart_xlnx_ps_irq_callback_set(struct device *dev,
  *
  * @return N/A
  */
-static void uart_xlnx_ps_isr(void *arg)
+static void uart_xlnx_ps_isr(const struct device *dev)
 {
-	struct device *dev = arg;
 	const struct uart_xlnx_ps_dev_data_t *data = DEV_DATA(dev);
 
 	if (data->user_cb) {
-		data->user_cb(data->user_data);
+		data->user_cb(dev, data->user_data);
 	}
 }
 #endif /* CONFIG_UART_INTERRUPT_DRIVEN */
@@ -1147,8 +1151,10 @@ static void uart_xlnx_ps_isr(void *arg)
 static const struct uart_driver_api uart_xlnx_ps_driver_api = {
 	.poll_in = uart_xlnx_ps_poll_in,
 	.poll_out = uart_xlnx_ps_poll_out,
+#ifdef CONFIG_UART_USE_RUNTIME_CONFIGURE
 	.configure = uart_xlnx_ps_configure,
 	.config_get = uart_xlnx_ps_config_get,
+#endif
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	.fifo_fill = uart_xlnx_ps_fifo_fill,
 	.fifo_read = uart_xlnx_ps_fifo_read,
@@ -1173,13 +1179,11 @@ static const struct uart_driver_api uart_xlnx_ps_driver_api = {
 	.irq_config_func = uart_xlnx_ps_irq_config_##port,
 
 #define UART_XLNX_PS_IRQ_CONF_FUNC(port) \
-DEVICE_DECLARE(uart_xlnx_ps_##port); \
-\
-static void uart_xlnx_ps_irq_config_##port(struct device *dev) \
+static void uart_xlnx_ps_irq_config_##port(const struct device *dev) \
 { \
 	IRQ_CONNECT(DT_INST_IRQN(port), \
 	DT_INST_IRQ(port, priority), \
-	uart_xlnx_ps_isr, DEVICE_GET(uart_xlnx_ps_##port), \
+	uart_xlnx_ps_isr, DEVICE_DT_INST_GET(port), \
 	0); \
 	irq_enable(DT_INST_IRQN(port)); \
 }
@@ -1205,11 +1209,12 @@ static struct uart_xlnx_ps_dev_config uart_xlnx_ps_dev_cfg_##port = { \
 }
 
 #define UART_XLNX_PS_INIT(port) \
-DEVICE_AND_API_INIT(uart_xlnx_ps_##port, DT_INST_LABEL(port), \
+DEVICE_DT_INST_DEFINE(port, \
 	uart_xlnx_ps_init, \
+	NULL, \
 	&uart_xlnx_ps_dev_data_##port, \
 	&uart_xlnx_ps_dev_cfg_##port, \
-	PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEVICE, \
+	PRE_KERNEL_1, CONFIG_SERIAL_INIT_PRIORITY, \
 	&uart_xlnx_ps_driver_api)
 
 #define UART_XLNX_INSTANTIATE(inst)		\

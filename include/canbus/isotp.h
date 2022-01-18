@@ -35,7 +35,9 @@
  * FC      Flow Control
  * FF      First Frame
  * FS      Flow Status
- * AE      Adders Extension
+ * AE      Address Extension
+ * SA      Source Address
+ * TA      Target Address
  */
 
 /*
@@ -90,6 +92,38 @@
 /** Timeout for recv */
 #define ISOTP_RECV_TIMEOUT      -14
 
+/*
+ * CAN ID filtering for ISO-TP fixed addressing according to SAE J1939
+ *
+ * Format of 29-bit CAN identifier:
+ * ------------------------------------------------------
+ * | 28 .. 26 | 25  | 24 | 23 .. 16 | 15 .. 8  | 7 .. 0 |
+ * ------------------------------------------------------
+ * | Priority | EDP | DP | N_TAtype |   N_TA   |  N_SA  |
+ * ------------------------------------------------------
+ */
+
+/** Position of fixed source address (SA) */
+#define ISOTP_FIXED_ADDR_SA_POS         (0U)
+
+/** Mask to obtain fixed source address (SA) */
+#define ISOTP_FIXED_ADDR_SA_MASK        (0xFF << ISOTP_FIXED_ADDR_SA_POS)
+
+/** Position of fixed target address (TA) */
+#define ISOTP_FIXED_ADDR_TA_POS         (8U)
+
+/** Mask to obtain fixed target address (TA) */
+#define ISOTP_FIXED_ADDR_TA_MASK        (0xFF << ISOTP_FIXED_ADDR_TA_POS)
+
+/** Position of priority in fixed addressing mode */
+#define ISOTP_FIXED_ADDR_PRIO_POS       (26U)
+
+/** Mask for priority in fixed addressing mode */
+#define ISOTP_FIXED_ADDR_PRIO_MASK      (0x7 << ISOTP_FIXED_ADDR_PRIO_POS)
+
+/* CAN filter RX mask to match any priority and source address (SA) */
+#define ISOTP_FIXED_ADDR_RX_MASK        (0x03FFFF00)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -100,17 +134,24 @@ extern "C" {
  * Used to pass addresses to the bind and send functions.
  */
 struct isotp_msg_id {
-	/** Message identifier*/
+	/**
+	 * CAN identifier
+	 *
+	 * If ISO-TP fixed addressing is used, isotp_bind ignores SA and
+	 * priority sections and modifies TA section in flow control frames.
+	 */
 	union {
 		uint32_t std_id  : 11;
 		uint32_t ext_id  : 29;
 	};
-	/** extended address */
+	/** ISO-TP extended address (if used) */
 	uint8_t ext_addr;
-	/** Indicates the identifier type (standard or extended) */
+	/** Indicates the CAN identifier type (standard or extended) */
 	uint8_t id_type : 1;
-	/** Indicates if extended addressing is used */
+	/** Indicates if ISO-TP extended addressing is used */
 	uint8_t use_ext_addr : 1;
+	/** Indicates if ISO-TP fixed addressing (acc. to SAE J1939) is used */
+	uint8_t use_fixed_addr : 1;
 };
 
 /*
@@ -155,7 +196,7 @@ struct isotp_recv_ctx;
  * @retval ISOTP_N_OK on success
  * @retval ISOTP_NO_FREE_FILTER if CAN device has no filters left.
  */
-int isotp_bind(struct isotp_recv_ctx *ctx, struct device *can_dev,
+int isotp_bind(struct isotp_recv_ctx *ctx, const struct device *can_dev,
 	       const struct isotp_msg_id *rx_addr,
 	       const struct isotp_msg_id *tx_addr,
 	       const struct isotp_fc_opts *opts,
@@ -235,7 +276,7 @@ int isotp_recv_net(struct isotp_recv_ctx *ctx, struct net_buf **buffer,
  * @retval ISOTP_N_OK on success
  * @retval ISOTP_N_* on error
  */
-int isotp_send(struct isotp_send_ctx *ctx, struct device *can_dev,
+int isotp_send(struct isotp_send_ctx *ctx, const struct device *can_dev,
 	       const uint8_t *data, size_t len,
 	       const struct isotp_msg_id *tx_addr,
 	       const struct isotp_msg_id *rx_addr,
@@ -260,7 +301,7 @@ int isotp_send(struct isotp_send_ctx *ctx, struct device *can_dev,
  * @retval ISOTP_N_OK on success
  * @retval ISOTP_N_* on error
  */
-int isotp_send_ctx_buf(struct device *can_dev,
+int isotp_send_ctx_buf(const struct device *can_dev,
 		       const uint8_t *data, size_t len,
 		       const struct isotp_msg_id *tx_addr,
 		       const struct isotp_msg_id *rx_addr,
@@ -285,7 +326,7 @@ int isotp_send_ctx_buf(struct device *can_dev,
  * @retval ISOTP_N_OK on success
  * @retval ISOTP_* on error
  */
-int isotp_send_net_ctx_buf(struct device *can_dev,
+int isotp_send_net_ctx_buf(const struct device *can_dev,
 			   struct net_buf *data,
 			   const struct isotp_msg_id *tx_addr,
 			   const struct isotp_msg_id *rx_addr,
@@ -315,7 +356,7 @@ int isotp_send_net_ctx_buf(struct device *can_dev,
  * @retval ISOTP_N_OK on success
  * @retval ISOTP_* on error
  */
-int isotp_send_buf(struct device *can_dev,
+int isotp_send_buf(const struct device *can_dev,
 		   const uint8_t *data, size_t len,
 		   const struct isotp_msg_id *tx_addr,
 		   const struct isotp_msg_id *rx_addr,
@@ -333,7 +374,7 @@ struct isotp_callback {
 struct isotp_send_ctx {
 	int filter_id;
 	uint32_t error_nr;
-	struct device *can_dev;
+	const struct device *can_dev;
 	union {
 		struct net_buf *buf;
 		struct {
@@ -362,7 +403,7 @@ struct isotp_send_ctx {
 
 struct isotp_recv_ctx {
 	int filter_id;
-	struct device *can_dev;
+	const struct device *can_dev;
 	struct net_buf *buf;
 	struct net_buf *act_frag;
 	sys_snode_t alloc_node;

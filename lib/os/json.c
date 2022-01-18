@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <assert.h>
+#include <sys/__assert.h>
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
@@ -259,7 +259,7 @@ static void *lexer_json(struct lexer *lexer)
 				return lexer_number;
 			}
 
-			/* fallthrough */
+			__fallthrough;
 		default:
 			if (isspace(chr)) {
 				ignore(lexer);
@@ -343,7 +343,7 @@ static int obj_next(struct json_obj *json,
 			return -EINVAL;
 		}
 
-		/* fallthrough */
+		__fallthrough;
 	case JSON_TOK_STRING:
 		kv->key = token.start;
 		kv->key_len = (size_t)(token.end - token.start);
@@ -509,12 +509,18 @@ static int arr_parse(struct json_obj *obj,
 {
 	ptrdiff_t elem_size = get_elem_size(elem_descr);
 	void *last_elem = (char *)field + elem_size * max_elements;
-	size_t *elements = (size_t *)((char *)val + elem_descr->offset);
+	size_t *elements = NULL;
 	struct token value;
 
-	assert(elem_size > 0);
+	if (val) {
+		elements = (size_t *)((char *)val + elem_descr->offset);
+	}
 
-	*elements = 0;
+	__ASSERT_NO_MSG(elem_size > 0);
+
+	if (elements) {
+		*elements = 0;
+	}
 
 	while (!arr_next(obj, &value)) {
 		if (value.type == JSON_TOK_LIST_END) {
@@ -525,11 +531,13 @@ static int arr_parse(struct json_obj *obj,
 			return -ENOSPC;
 		}
 
-		if (decode_value(obj, elem_descr, &value, field, val) < 0) {
+		if (decode_value(obj, elem_descr, &value, field, NULL) < 0) {
 			return -EINVAL;
 		}
 
-		(*elements)++;
+		if (elements) {
+			(*elements)++;
+		}
 		field = (char *)field + elem_size;
 	}
 
@@ -589,7 +597,7 @@ int json_obj_parse(char *payload, size_t len,
 	struct json_obj obj;
 	int ret;
 
-	assert(descr_len < (sizeof(ret) * CHAR_BIT - 1));
+	__ASSERT_NO_MSG(descr_len < (sizeof(ret) * CHAR_BIT - 1));
 
 	ret = obj_init(&obj, payload, len);
 	if (ret < 0) {

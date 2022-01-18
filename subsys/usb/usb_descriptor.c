@@ -10,9 +10,7 @@
 #include <string.h>
 #include <sys/byteorder.h>
 #include <sys/__assert.h>
-#include <usb/usbstruct.h>
 #include <usb/usb_device.h>
-#include <usb/usb_common.h>
 #include "usb_descriptor.h"
 #include <drivers/hwinfo.h>
 
@@ -59,14 +57,14 @@ USBD_DEVICE_DESCR_DEFINE(primary) struct common_descriptor common_desc = {
 	/* Device descriptor */
 	.device_descriptor = {
 		.bLength = sizeof(struct usb_device_descriptor),
-		.bDescriptorType = USB_DEVICE_DESC,
+		.bDescriptorType = USB_DESC_DEVICE,
 #ifdef CONFIG_USB_DEVICE_BOS
-		.bcdUSB = sys_cpu_to_le16(USB_2_1),
+		.bcdUSB = sys_cpu_to_le16(USB_SRN_2_1),
 #else
-		.bcdUSB = sys_cpu_to_le16(USB_2_0),
+		.bcdUSB = sys_cpu_to_le16(USB_SRN_2_0),
 #endif
 #ifdef CONFIG_USB_COMPOSITE_DEVICE
-		.bDeviceClass = MISC_CLASS,
+		.bDeviceClass = USB_BCC_MISCELLANEOUS,
 		.bDeviceSubClass = 0x02,
 		.bDeviceProtocol = 0x01,
 #else
@@ -77,7 +75,7 @@ USBD_DEVICE_DESCR_DEFINE(primary) struct common_descriptor common_desc = {
 		.bMaxPacketSize0 = USB_MAX_CTRL_MPS,
 		.idVendor = sys_cpu_to_le16((uint16_t)CONFIG_USB_DEVICE_VID),
 		.idProduct = sys_cpu_to_le16((uint16_t)CONFIG_USB_DEVICE_PID),
-		.bcdDevice = sys_cpu_to_le16(BCDDEVICE_RELNUM),
+		.bcdDevice = sys_cpu_to_le16(USB_BCD_DRN),
 		.iManufacturer = USB_DESC_MANUFACTURER_IDX,
 		.iProduct = USB_DESC_PRODUCT_IDX,
 		.iSerialNumber = USB_DESC_SERIAL_NUMBER_IDX,
@@ -86,13 +84,13 @@ USBD_DEVICE_DESCR_DEFINE(primary) struct common_descriptor common_desc = {
 	/* Configuration descriptor */
 	.cfg_descr = {
 		.bLength = sizeof(struct usb_cfg_descriptor),
-		.bDescriptorType = USB_CONFIGURATION_DESC,
+		.bDescriptorType = USB_DESC_CONFIGURATION,
 		/*wTotalLength will be fixed in usb_fix_descriptor() */
 		.wTotalLength = 0,
 		.bNumInterfaces = 0,
 		.bConfigurationValue = 1,
 		.iConfiguration = 0,
-		.bmAttributes = USB_CONFIGURATION_ATTRIBUTES,
+		.bmAttributes = USB_SCD_ATTRIBUTES,
 		.bMaxPower = CONFIG_USB_MAX_POWER,
 	},
 };
@@ -127,27 +125,27 @@ struct usb_string_desription {
 USBD_STRING_DESCR_DEFINE(primary) struct usb_string_desription string_descr = {
 	.lang_descr = {
 		.bLength = sizeof(struct usb_string_descriptor),
-		.bDescriptorType = USB_STRING_DESC,
+		.bDescriptorType = USB_DESC_STRING,
 		.bString = sys_cpu_to_le16(0x0409),
 	},
 	/* Manufacturer String Descriptor */
 	.utf16le_mfr = {
 		.bLength = USB_STRING_DESCRIPTOR_LENGTH(
 				CONFIG_USB_DEVICE_MANUFACTURER),
-		.bDescriptorType = USB_STRING_DESC,
+		.bDescriptorType = USB_DESC_STRING,
 		.bString = CONFIG_USB_DEVICE_MANUFACTURER,
 	},
 	/* Product String Descriptor */
 	.utf16le_product = {
 		.bLength = USB_STRING_DESCRIPTOR_LENGTH(
 				CONFIG_USB_DEVICE_PRODUCT),
-		.bDescriptorType = USB_STRING_DESC,
+		.bDescriptorType = USB_DESC_STRING,
 		.bString = CONFIG_USB_DEVICE_PRODUCT,
 	},
 	/* Serial Number String Descriptor */
 	.utf16le_sn = {
 		.bLength = USB_STRING_DESCRIPTOR_LENGTH(CONFIG_USB_DEVICE_SN),
-		.bDescriptorType = USB_STRING_DESC,
+		.bDescriptorType = USB_DESC_STRING,
 		.bString = CONFIG_USB_DEVICE_SN,
 	},
 };
@@ -198,7 +196,7 @@ int usb_get_str_descriptor_idx(void *ptr)
 
 	while (head->bLength != 0U) {
 		switch (head->bDescriptorType) {
-		case USB_STRING_DESC:
+		case USB_DESC_STRING:
 			if (head == (struct usb_desc_header *)str) {
 				return str_descr_idx;
 			}
@@ -228,7 +226,7 @@ static int usb_validate_ep_cfg_data(struct usb_ep_descriptor * const ep_descr,
 				    struct usb_cfg_data * const cfg_data,
 				    uint32_t *requested_ep)
 {
-	for (int i = 0; i < cfg_data->num_endpoints; i++) {
+	for (unsigned int i = 0; i < cfg_data->num_endpoints; i++) {
 		struct usb_ep_cfg_data *ep_data = cfg_data->endpoint;
 
 		/*
@@ -238,7 +236,7 @@ static int usb_validate_ep_cfg_data(struct usb_ep_descriptor * const ep_descr,
 			continue;
 		}
 
-		for (uint8_t idx = 1; idx < 16; idx++) {
+		for (uint8_t idx = 1; idx < 16U; idx++) {
 			struct usb_dc_ep_cfg_data ep_cfg;
 
 			ep_cfg.ep_type = (ep_descr->bmAttributes &
@@ -246,13 +244,13 @@ static int usb_validate_ep_cfg_data(struct usb_ep_descriptor * const ep_descr,
 			ep_cfg.ep_mps = ep_descr->wMaxPacketSize;
 			ep_cfg.ep_addr = ep_descr->bEndpointAddress;
 			if (ep_cfg.ep_addr & USB_EP_DIR_IN) {
-				if ((*requested_ep & (1 << (idx + 16)))) {
+				if ((*requested_ep & (1U << (idx + 16U)))) {
 					continue;
 				}
 
 				ep_cfg.ep_addr = (USB_EP_DIR_IN | idx);
 			} else {
-				if ((*requested_ep & (1 << (idx)))) {
+				if ((*requested_ep & (1U << (idx)))) {
 					continue;
 				}
 
@@ -265,9 +263,9 @@ static int usb_validate_ep_cfg_data(struct usb_ep_descriptor * const ep_descr,
 				ep_descr->bEndpointAddress = ep_cfg.ep_addr;
 				ep_data[i].ep_addr = ep_cfg.ep_addr;
 				if (ep_cfg.ep_addr & USB_EP_DIR_IN) {
-					*requested_ep |= (1 << (idx + 16));
+					*requested_ep |= (1U << (idx + 16U));
 				} else {
-					*requested_ep |= (1 << idx);
+					*requested_ep |= (1U << idx);
 				}
 				LOG_DBG("endpoint 0x%x", ep_data[i].ep_addr);
 				return 0;
@@ -299,22 +297,34 @@ static struct usb_cfg_data *usb_get_cfg_data(struct usb_if_descriptor *iface)
  * Default USB Serial Number string descriptor will be derived from
  * Hardware Information Driver (HWINFO). User can implement own variant
  * of this function. Please note that the length of the new Serial Number
- * descriptor may not exceed the length of the CONFIG_USB_DEVICE_SN.
+ * descriptor may not exceed the length of the CONFIG_USB_DEVICE_SN. In
+ * case the device ID returned by the HWINFO driver is bigger, the lower
+ * part is used for the USB Serial Number, as that part is usually having
+ * more entropy.
  */
 __weak uint8_t *usb_update_sn_string_descriptor(void)
 {
-	uint8_t hwid[sizeof(CONFIG_USB_DEVICE_SN) / 2];
+	/*
+	 * The biggest device ID supported by the HWINFO driver is currently
+	 * 128 bits, which is 16 bytes. Assume this is the maximum for now,
+	 * unless the user requested a longer serial number.
+	 */
+	const int usblen = sizeof(CONFIG_USB_DEVICE_SN) / 2;
+	uint8_t hwid[MAX(16, sizeof(CONFIG_USB_DEVICE_SN) / 2)];
 	static uint8_t sn[sizeof(CONFIG_USB_DEVICE_SN) + 1];
 	const char hex[] = "0123456789ABCDEF";
+	int hwlen, skip;
 
 	memset(hwid, 0, sizeof(hwid));
 	memset(sn, 0, sizeof(sn));
 
-	if (hwinfo_get_device_id(hwid, sizeof(hwid)) > 0) {
-		LOG_HEXDUMP_DBG(hwid, sizeof(hwid), "Serial Number");
-		for (int i = 0; i < sizeof(hwid); i++) {
-			sn[i * 2] = hex[hwid[i] >> 4];
-			sn[i * 2 + 1] = hex[hwid[i] & 0xF];
+	hwlen = hwinfo_get_device_id(hwid, sizeof(hwid));
+	if (hwlen > 0) {
+		skip = MAX(0, hwlen - usblen);
+		LOG_HEXDUMP_DBG(&hwid[skip], usblen, "Serial Number");
+		for (int i = 0; i < usblen; i++) {
+			sn[i * 2] = hex[hwid[i + skip] >> 4];
+			sn[i * 2 + 1] = hex[hwid[i + skip] & 0xF];
 		}
 	}
 
@@ -368,14 +378,14 @@ static int usb_fix_descriptor(struct usb_desc_header *head)
 
 	while (head->bLength != 0U) {
 		switch (head->bDescriptorType) {
-		case USB_CONFIGURATION_DESC:
+		case USB_DESC_CONFIGURATION:
 			cfg_descr = (struct usb_cfg_descriptor *)head;
 			LOG_DBG("Configuration descriptor %p", head);
 			break;
-		case USB_ASSOCIATION_DESC:
+		case USB_DESC_INTERFACE_ASSOC:
 			LOG_DBG("Association descriptor %p", head);
 			break;
-		case USB_INTERFACE_DESC:
+		case USB_DESC_INTERFACE:
 			if_descr = (struct usb_if_descriptor *)head;
 			LOG_DBG("Interface descriptor %p", head);
 			if (if_descr->bAlternateSetting) {
@@ -399,7 +409,7 @@ static int usb_fix_descriptor(struct usb_desc_header *head)
 
 			numof_ifaces++;
 			break;
-		case USB_ENDPOINT_DESC:
+		case USB_DESC_ENDPOINT:
 			if (!cfg_data) {
 				LOG_ERR("Uninitialized usb_cfg_data pointer, "
 					"corrupted device descriptor?");
@@ -417,7 +427,7 @@ static int usb_fix_descriptor(struct usb_desc_header *head)
 
 			break;
 		case 0:
-		case USB_STRING_DESC:
+		case USB_DESC_STRING:
 			/*
 			 * Copy runtime SN string descriptor first, if has
 			 */
@@ -484,8 +494,8 @@ struct usb_dev_data *usb_get_dev_data_by_cfg(sys_slist_t *list,
 	struct usb_dev_data *dev_data;
 
 	SYS_SLIST_FOR_EACH_CONTAINER(list, dev_data, node) {
-		struct device *dev = dev_data->dev;
-		const struct usb_cfg_data *cfg_cur = dev->config_info;
+		const struct device *dev = dev_data->dev;
+		const struct usb_cfg_data *cfg_cur = dev->config;
 
 		if (cfg_cur == cfg) {
 			return dev_data;
@@ -503,8 +513,8 @@ struct usb_dev_data *usb_get_dev_data_by_iface(sys_slist_t *list,
 	struct usb_dev_data *dev_data;
 
 	SYS_SLIST_FOR_EACH_CONTAINER(list, dev_data, node) {
-		struct device *dev = dev_data->dev;
-		const struct usb_cfg_data *cfg = dev->config_info;
+		const struct device *dev = dev_data->dev;
+		const struct usb_cfg_data *cfg = dev->config;
 		const struct usb_if_descriptor *if_desc =
 						cfg->interface_descriptor;
 
@@ -523,8 +533,8 @@ struct usb_dev_data *usb_get_dev_data_by_ep(sys_slist_t *list, uint8_t ep)
 	struct usb_dev_data *dev_data;
 
 	SYS_SLIST_FOR_EACH_CONTAINER(list, dev_data, node) {
-		struct device *dev = dev_data->dev;
-		const struct usb_cfg_data *cfg = dev->config_info;
+		const struct device *dev = dev_data->dev;
+		const struct usb_cfg_data *cfg = dev->config;
 		const struct usb_ep_cfg_data *ep_data = cfg->endpoint;
 
 		for (uint8_t i = 0; i < cfg->num_endpoints; i++) {

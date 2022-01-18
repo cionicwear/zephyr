@@ -13,8 +13,8 @@ counting semaphore.
 Concepts
 ********
 
-Any number of semaphores can be defined. Each semaphore is referenced
-by its memory address.
+Any number of semaphores can be defined (limited only by available RAM). Each
+semaphore is referenced by its memory address.
 
 A semaphore has the following key properties:
 
@@ -38,6 +38,13 @@ When the semaphore is given, it is taken by the highest priority thread
 that has waited longest.
 
 .. note::
+    You may initialize a "full" semaphore (count equal to limit) to limit the number
+    of threads able to execute the critical section at the same time. You may also
+    initialize an empty semaphore (count equal to 0, with a limit greater than 0)
+    to create a gate through which no waiting thread may pass until the semaphore
+    is incremented. All standard use cases of the common semaphore are supported.
+
+.. note::
     The kernel does allow an ISR to take a semaphore, however the ISR must
     not attempt to wait if the semaphore is unavailable.
 
@@ -47,8 +54,8 @@ Implementation
 Defining a Semaphore
 ====================
 
-A semaphore is defined using a variable of type :c:type:`k_sem`.
-It must then be initialized by calling :cpp:func:`k_sem_init()`.
+A semaphore is defined using a variable of type :c:struct:`k_sem`.
+It must then be initialized by calling :c:func:`k_sem_init`.
 
 The following code defines a semaphore, then configures it as a binary
 semaphore by setting its count to 0 and its limit to 1.
@@ -71,7 +78,7 @@ The following code has the same effect as the code segment above.
 Giving a Semaphore
 ==================
 
-A semaphore is given by calling :cpp:func:`k_sem_give()`.
+A semaphore is given by calling :c:func:`k_sem_give`.
 
 The following code builds on the example above, and gives the semaphore to
 indicate that a unit of data is available for processing by a consumer thread.
@@ -89,7 +96,7 @@ indicate that a unit of data is available for processing by a consumer thread.
 Taking a Semaphore
 ==================
 
-A semaphore is taken by calling :cpp:func:`k_sem_take()`.
+A semaphore is taken by calling :c:func:`k_sem_take`.
 
 The following code builds on the example above, and waits up to 50 milliseconds
 for the semaphore to be given.
@@ -129,7 +136,6 @@ API Reference
 **************
 
 .. doxygengroup:: semaphore_apis
-   :project: Zephyr
 
 User Mode Semaphore API Reference
 *********************************
@@ -139,4 +145,3 @@ thread when user mode enabled. When user mode isn't enabled, sys_sem behaves
 like k_sem.
 
 .. doxygengroup:: user_semaphore_apis
-   :project: Zephyr

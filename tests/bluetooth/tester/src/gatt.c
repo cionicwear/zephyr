@@ -9,7 +9,6 @@
 #include <zephyr/types.h>
 #include <string.h>
 #include <errno.h>
-#include <assert.h>
 
 #include <toolchain.h>
 #include <bluetooth/bluetooth.h>
@@ -18,6 +17,7 @@
 #include <bluetooth/uuid.h>
 #include <sys/byteorder.h>
 #include <sys/printk.h>
+#include <sys/__assert.h>
 #include <net/buf.h>
 
 #include <logging/log.h>
@@ -75,6 +75,11 @@ static struct {
 	uint16_t len;
 	uint8_t buf[MAX_BUFFER_SIZE];
 } gatt_buf;
+
+struct get_attr_data {
+	struct net_buf_simple *buf;
+	struct bt_conn *conn;
+};
 
 static void *gatt_buf_add(const void *data, size_t len)
 {
@@ -304,7 +309,7 @@ static ssize_t read_value(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
 	}
 
-	if ((attr->perm & GATT_PERM_ENC_READ_MASK) &&
+	if ((attr->perm & GATT_PERM_ENC_READ_MASK) && (conn != NULL) &&
 	    (value->enc_key_size > bt_conn_enc_key_size(conn))) {
 		return BT_GATT_ERR(BT_ATT_ERR_ENCRYPTION_KEY_SIZE);
 	}
@@ -357,7 +362,7 @@ static ssize_t write_value(struct bt_conn *conn,
 	memcpy(value->data + offset, buf, len);
 
 	/* Maximum attribute value size is 512 bytes */
-	assert(value->len < 512);
+	__ASSERT_NO_MSG(value->len < 512);
 
 	attr_value_changed_ev(attr->handle, value->data, value->len);
 
@@ -734,8 +739,8 @@ struct set_value {
 
 struct bt_gatt_indicate_params indicate_params;
 
-static void indicate_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-			uint8_t err)
+static void indicate_cb(struct bt_conn *conn,
+			struct bt_gatt_indicate_params *params, uint8_t err)
 {
 	if (err != 0U) {
 		LOG_ERR("Indication fail");
@@ -781,6 +786,7 @@ static uint8_t alloc_value(struct bt_gatt_attr *attr, struct set_value *data)
 			indicate_params.data = value->data;
 			indicate_params.len = value->len;
 			indicate_params.func = indicate_cb;
+			indicate_params.destroy = NULL;
 
 			bt_gatt_indicate(NULL, &indicate_params);
 		}
@@ -988,8 +994,8 @@ static void disc_all_prim(uint8_t *data, uint16_t len)
 	}
 
 	discover_params.uuid = NULL;
-	discover_params.start_handle = 0x0001;
-	discover_params.end_handle = 0xffff;
+	discover_params.start_handle = BT_ATT_FIRST_ATTTRIBUTE_HANDLE;
+	discover_params.end_handle = BT_ATT_LAST_ATTTRIBUTE_HANDLE;
 	discover_params.type = BT_GATT_DISCOVER_PRIMARY;
 	discover_params.func = disc_prim_cb;
 
@@ -1031,8 +1037,8 @@ static void disc_prim_uuid(uint8_t *data, uint16_t len)
 	}
 
 	discover_params.uuid = &uuid.uuid;
-	discover_params.start_handle = 0x0001;
-	discover_params.end_handle = 0xffff;
+	discover_params.start_handle = BT_ATT_FIRST_ATTTRIBUTE_HANDLE;
+	discover_params.end_handle = BT_ATT_LAST_ATTTRIBUTE_HANDLE;
 	discover_params.type = BT_GATT_DISCOVER_PRIMARY;
 	discover_params.func = disc_prim_cb;
 
@@ -1384,7 +1390,7 @@ static uint8_t read_cb(struct bt_conn *conn, uint8_t err,
 	return BT_GATT_ITER_CONTINUE;
 }
 
-static void read(uint8_t *data, uint16_t len)
+static void read_data(uint8_t *data, uint16_t len)
 {
 	const struct gatt_read_cmd *cmd = (void *) data;
 	struct bt_conn *conn;
@@ -1527,7 +1533,8 @@ static void read_multiple(uint8_t *data, uint16_t len)
 
 	read_params.func = read_cb;
 	read_params.handle_count = i;
-	read_params.handles = handles; /* not used in read func */
+	read_params.multiple.handles = handles; /* not used in read func */
+	read_params.multiple.variable = false;
 
 	/* TODO should be handled as user_data via CONTAINER_OF macro */
 	btp_opcode = GATT_READ_MULTIPLE;
@@ -1582,7 +1589,7 @@ static void write_rsp(struct bt_conn *conn, uint8_t err,
 
 static struct bt_gatt_write_params write_params;
 
-static void write(uint8_t *data, uint16_t len)
+static void write_data(uint8_t *data, uint16_t len)
 {
 	const struct gatt_write_cmd *cmd = (void *) data;
 	struct bt_conn *conn;
@@ -1735,7 +1742,7 @@ static int enable_subscription(struct bt_conn *conn, uint16_t ccc_handle,
 	}
 
 	/* Discover Characteristic Value this CCC Descriptor refers to */
-	discover_params.start_handle = 0x0001;
+	discover_params.start_handle = BT_ATT_FIRST_ATTTRIBUTE_HANDLE;
 	discover_params.end_handle = ccc_handle;
 	discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
 	discover_params.func = discover_func;
@@ -1814,7 +1821,8 @@ struct get_attrs_foreach_data {
 	uint8_t count;
 };
 
-static uint8_t get_attrs_rp(const struct bt_gatt_attr *attr, void *user_data)
+static uint8_t get_attrs_rp(const struct bt_gatt_attr *attr, uint16_t handle,
+			    void *user_data)
 {
 	struct get_attrs_foreach_data *foreach = user_data;
 	struct gatt_attr *gatt_attr;
@@ -1825,7 +1833,7 @@ static uint8_t get_attrs_rp(const struct bt_gatt_attr *attr, void *user_data)
 	}
 
 	gatt_attr = net_buf_simple_add(foreach->buf, sizeof(*gatt_attr));
-	gatt_attr->handle = sys_cpu_to_le16(attr->handle);
+	gatt_attr->handle = sys_cpu_to_le16(handle);
 	gatt_attr->permission = attr->perm;
 
 	if (attr->uuid->type == BT_UUID_TYPE_16) {
@@ -1902,9 +1910,12 @@ static uint8_t err_to_att(int err)
 	return BT_ATT_ERR_UNLIKELY;
 }
 
-static uint8_t get_attr_val_rp(const struct bt_gatt_attr *attr, void *user_data)
+static uint8_t get_attr_val_rp(const struct bt_gatt_attr *attr, uint16_t handle,
+			       void *user_data)
 {
-	struct net_buf_simple *buf = user_data;
+	struct get_attr_data *u_data = user_data;
+	struct net_buf_simple *buf = u_data->buf;
+	struct bt_conn *conn = u_data->conn;
 	struct gatt_get_attribute_value_rp *rp;
 	ssize_t read, to_read;
 
@@ -1920,7 +1931,7 @@ static uint8_t get_attr_val_rp(const struct bt_gatt_attr *attr, void *user_data)
 			break;
 		}
 
-		read = attr->read(NULL, attr, buf->data + buf->len, to_read,
+		read = attr->read(conn, attr, buf->data + buf->len, to_read,
 				  rp->value_length);
 		if (read < 0) {
 			rp->att_response = err_to_att(read);
@@ -1940,10 +1951,15 @@ static void get_attr_val(uint8_t *data, uint16_t len)
 	const struct gatt_get_attribute_value_cmd *cmd = (void *) data;
 	struct net_buf_simple *buf = NET_BUF_SIMPLE(BTP_DATA_MAX_SIZE);
 	uint16_t handle = sys_le16_to_cpu(cmd->handle);
+	struct bt_conn *conn;
+
+	conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, (bt_addr_le_t *)cmd);
 
 	net_buf_simple_init(buf, 0);
 
-	bt_gatt_foreach_attr(handle, handle, get_attr_val_rp, buf);
+	struct get_attr_data cb_data = { .buf = buf, .conn = conn };
+
+	bt_gatt_foreach_attr(handle, handle, get_attr_val_rp, &cb_data);
 
 	if (buf->len) {
 		tester_send(BTP_SERVICE_ID_GATT, GATT_GET_ATTRIBUTE_VALUE,
@@ -2004,7 +2020,7 @@ void tester_handle_gatt(uint8_t opcode, uint8_t index, uint8_t *data,
 		disc_all_desc(data, len);
 		return;
 	case GATT_READ:
-		read(data, len);
+		read_data(data, len);
 		return;
 	case GATT_READ_UUID:
 		read_uuid(data, len);
@@ -2022,7 +2038,7 @@ void tester_handle_gatt(uint8_t opcode, uint8_t index, uint8_t *data,
 		write_without_rsp(data, len, opcode, true);
 		return;
 	case GATT_WRITE:
-		write(data, len);
+		write_data(data, len);
 		return;
 	case GATT_WRITE_LONG:
 		write_long(data, len);

@@ -43,26 +43,120 @@
 
 #include "ll_sw/pdu.h"
 #include "ll_sw/lll.h"
+#include "lll/lll_df_types.h"
+#include "ll_sw/lll_conn.h"
 #include "ll.h"
+
+#include "isoal.h"
+#include "lll_conn_iso.h"
+#include "ull_conn_iso_types.h"
+#include "ull_iso_types.h"
+#include "ull_conn_internal.h"
+#include "ull_conn_iso_internal.h"
 
 #include "hci_internal.h"
 
 #include "hal/debug.h"
 
-static K_SEM_DEFINE(sem_prio_recv, 0, UINT_MAX);
+static K_SEM_DEFINE(sem_prio_recv, 0, K_SEM_MAX_LIMIT);
 static K_FIFO_DEFINE(recv_fifo);
 
 struct k_thread prio_recv_thread_data;
-static K_THREAD_STACK_DEFINE(prio_recv_thread_stack,
+static K_KERNEL_STACK_DEFINE(prio_recv_thread_stack,
 			     CONFIG_BT_CTLR_RX_PRIO_STACK_SIZE);
 struct k_thread recv_thread_data;
-static K_THREAD_STACK_DEFINE(recv_thread_stack, CONFIG_BT_RX_STACK_SIZE);
+static K_KERNEL_STACK_DEFINE(recv_thread_stack, CONFIG_BT_RX_STACK_SIZE);
 
 #if defined(CONFIG_BT_HCI_ACL_FLOW_CONTROL)
 static struct k_poll_signal hbuf_signal =
 		K_POLL_SIGNAL_INITIALIZER(hbuf_signal);
 static sys_slist_t hbuf_pend;
 static int32_t hbuf_count;
+#endif
+
+#if defined(CONFIG_BT_CTLR_ISO)
+
+#define SDU_HCI_HDR_SIZE (BT_HCI_ISO_HDR_SIZE + BT_HCI_ISO_TS_DATA_HDR_SIZE)
+
+isoal_status_t sink_sdu_alloc_hci(const struct isoal_sink    *sink_ctx,
+				  const struct isoal_pdu_rx  *valid_pdu,
+				  struct isoal_sdu_buffer    *sdu_buffer)
+{
+	ARG_UNUSED(sink_ctx);
+	ARG_UNUSED(valid_pdu); /* TODO copy valid pdu into netbuf ? */
+
+	struct net_buf *buf  = bt_buf_get_rx(BT_BUF_ISO_IN, K_NO_WAIT);
+
+	if (buf) {
+		/* Reserve space for headers */
+		net_buf_reserve(buf, SDU_HCI_HDR_SIZE);
+
+		sdu_buffer->dbuf = buf;
+		sdu_buffer->size = net_buf_tailroom(buf);
+	} else {
+		LL_ASSERT(0);
+	}
+
+	return ISOAL_STATUS_OK;
+}
+
+
+isoal_status_t sink_sdu_emit_hci(const struct isoal_sink         *sink_ctx,
+				 const struct isoal_sdu_produced *valid_sdu)
+{
+	struct bt_hci_iso_ts_data_hdr *data_hdr;
+	uint16_t packet_status_flag;
+	uint16_t slen, slen_packed;
+	struct bt_hci_iso_hdr *hdr;
+	uint16_t handle_packed;
+	struct net_buf *buf;
+	uint16_t handle;
+	uint8_t  ts, pb;
+	uint16_t len;
+
+	buf = (struct net_buf *) valid_sdu->contents.dbuf;
+
+	if (buf) {
+		data_hdr = net_buf_push(buf, BT_HCI_ISO_TS_DATA_HDR_SIZE);
+		hdr = net_buf_push(buf, BT_HCI_ISO_HDR_SIZE);
+
+		handle = sink_ctx->session.handle;
+
+		pb = sink_ctx->sdu_production.sdu_state;
+
+		ts = 1;   /*TODO: Always assume timestamp? */
+		handle_packed = bt_iso_handle_pack(handle, pb, ts);
+		len = sink_ctx->sdu_production.sdu_written + BT_HCI_ISO_TS_DATA_HDR_SIZE;
+
+		hdr->handle = sys_cpu_to_le16(handle_packed);
+		hdr->len = sys_cpu_to_le16(len);
+
+		packet_status_flag = 0x0000; /* TODO: For now always assume "valid data" */
+		slen = sink_ctx->sdu_production.sdu_written;
+		slen_packed = bt_iso_pkt_len_pack(slen, packet_status_flag);
+
+		data_hdr->ts = sys_cpu_to_le32((uint32_t) valid_sdu->timestamp);
+		data_hdr->data.sn   = sys_cpu_to_le16((uint16_t) valid_sdu->seqn);
+		data_hdr->data.slen = sys_cpu_to_le16(slen_packed);
+
+		/* send fragment up the chain */
+		bt_recv(buf);
+	}
+
+	return ISOAL_STATUS_OK;
+}
+
+isoal_status_t sink_sdu_write_hci(void *dbuf,
+				  const uint8_t *pdu_payload,
+				  const size_t consume_len)
+{
+	struct net_buf *buf = (struct net_buf *) dbuf;
+
+	LL_ASSERT(buf);
+	net_buf_add_mem(buf, pdu_payload, consume_len);
+
+	return ISOAL_STATUS_OK;
+}
 #endif
 
 static struct net_buf *process_prio_evt(struct node_rx_pdu *node_rx,
@@ -203,6 +297,32 @@ static inline struct net_buf *encode_node(struct node_rx_pdu *node_rx,
 		hci_acl_encode(node_rx, buf);
 		break;
 #endif
+#if defined(CONFIG_BT_CTLR_ISO)
+	case HCI_CLASS_ISO_DATA: {
+#if defined(CONFIG_BT_CTLR_CONN_ISO)
+		struct ll_conn_iso_stream *cis =
+			ll_conn_iso_stream_get(node_rx->hdr.handle);
+		struct ll_iso_datapath *dp = cis->datapath_out;
+		isoal_sink_handle_t sink = dp->sink_hdl;
+
+		if (dp->path_id == BT_HCI_DATAPATH_ID_HCI) {
+			/* If HCI datapath pass to ISO AL here */
+			struct isoal_pdu_rx pckt_meta = {
+				.meta = &node_rx->hdr.rx_iso_meta,
+				.pdu  = (union isoal_pdu *) &node_rx->pdu[0]
+			};
+
+			/* Pass the ISO PDU through ISO-AL */
+			isoal_status_t err =
+				isoal_rx_pdu_recombine(sink, &pckt_meta);
+
+			LL_ASSERT(err == ISOAL_STATUS_OK); /* TODO handle err */
+		}
+#endif
+		break;
+	}
+#endif
+
 	default:
 		LL_ASSERT(0);
 		break;
@@ -225,6 +345,7 @@ static inline struct net_buf *process_node(struct node_rx_pdu *node_rx)
 
 		/* controller to host flow control enabled */
 		switch (class) {
+		case HCI_CLASS_ISO_DATA:
 		case HCI_CLASS_EVT_DISCARDABLE:
 		case HCI_CLASS_EVT_REQUIRED:
 			break;
@@ -232,7 +353,7 @@ static inline struct net_buf *process_node(struct node_rx_pdu *node_rx)
 		case HCI_CLASS_EVT_LLCP:
 			/* for conn-related events, only pend is relevant */
 			hbuf_count = 1;
-			/* fallthrough */
+			__fallthrough;
 		case HCI_CLASS_ACL_DATA:
 			if (pend || !hbuf_count) {
 				sys_slist_append(&hbuf_pend, (void *)node_rx);
@@ -394,17 +515,27 @@ static void recv_thread(void *p1, void *p2, void *p3)
 			buf = process_node(node_rx);
 		}
 
-		if (buf) {
-			if (buf->len) {
-				BT_DBG("Packet in: type:%u len:%u",
-					bt_buf_get_type(buf), buf->len);
-				bt_recv(buf);
-			} else {
-				net_buf_unref(buf);
-			}
-		}
+		while (buf) {
+			struct net_buf *frag;
 
-		k_yield();
+			/* Increment ref count, which will be
+			 * unref on call to net_buf_frag_del
+			 */
+			frag = net_buf_ref(buf);
+			buf = net_buf_frag_del(NULL, buf);
+
+			if (frag->len) {
+				BT_DBG("Packet in: type:%u len:%u",
+					bt_buf_get_type(frag),
+					frag->len);
+
+				bt_recv(frag);
+			} else {
+				net_buf_unref(frag);
+			}
+
+			k_yield();
+		}
 	}
 }
 
@@ -499,13 +630,13 @@ static int hci_driver_open(void)
 #endif
 
 	k_thread_create(&prio_recv_thread_data, prio_recv_thread_stack,
-			K_THREAD_STACK_SIZEOF(prio_recv_thread_stack),
+			K_KERNEL_STACK_SIZEOF(prio_recv_thread_stack),
 			prio_recv_thread, NULL, NULL, NULL,
-			K_PRIO_COOP(CONFIG_BT_CTLR_RX_PRIO), 0, K_NO_WAIT);
+			K_PRIO_COOP(CONFIG_BT_DRIVER_RX_HIGH_PRIO), 0, K_NO_WAIT);
 	k_thread_name_set(&prio_recv_thread_data, "BT RX pri");
 
 	k_thread_create(&recv_thread_data, recv_thread_stack,
-			K_THREAD_STACK_SIZEOF(recv_thread_stack),
+			K_KERNEL_STACK_SIZEOF(recv_thread_stack),
 			recv_thread, NULL, NULL, NULL,
 			K_PRIO_COOP(CONFIG_BT_RX_PRIO), 0, K_NO_WAIT);
 	k_thread_name_set(&recv_thread_data, "BT RX");
@@ -518,11 +649,12 @@ static int hci_driver_open(void)
 static const struct bt_hci_driver drv = {
 	.name	= "Controller",
 	.bus	= BT_HCI_DRIVER_BUS_VIRTUAL,
+	.quirks = BT_QUIRK_NO_AUTO_DLE,
 	.open	= hci_driver_open,
 	.send	= hci_driver_send,
 };
 
-static int hci_driver_init(struct device *unused)
+static int hci_driver_init(const struct device *unused)
 {
 	ARG_UNUSED(unused);
 

@@ -2,7 +2,7 @@
   <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
       <span class="fa fa-book"> Zephyr Project</span>
-      v: {{ current_version }}
+      v: latest
       <span class="fa fa-caret-down"></span>
     </span>
     <div class="rst-other-versions">
@@ -11,6 +11,11 @@
         {% for slug, url in versions %}
           <dd><a href="{{ url }}">{{ slug }}</a></dd>
         {% endfor %}
+      </dl>
+      <dl>
+        <dt>{{ _('Downloads') }}</dt>
+        {% set prefix = current_version if is_release else "latest" %}
+        <dd><a href="/{{ prefix }}/zephyr.pdf">PDF</a></dd>
       </dl>
       <dl>
         <dt>{{ _('zephyrproject.org Links') }}</dt>

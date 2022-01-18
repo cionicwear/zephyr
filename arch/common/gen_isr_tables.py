@@ -61,7 +61,7 @@ def read_intlist(intlist_path, syms):
         /** ISR to call */
         void *func;
         /** Parameter for non-direct IRQs */
-        void *param;
+        const void *param;
     };
     """
 
@@ -134,11 +134,12 @@ source_header = """
 #include <arch/cpu.h>
 
 #if defined(CONFIG_GEN_SW_ISR_TABLE) && defined(CONFIG_GEN_IRQ_VECTOR_TABLE)
-#define ISR_WRAPPER ((uint32_t)&_isr_wrapper)
+#define ISR_WRAPPER ((uintptr_t)&_isr_wrapper)
 #else
 #define ISR_WRAPPER NULL
 #endif
 
+typedef void (* ISR)(const void *);
 """
 
 def write_source_file(fp, vt, swt, intlist, syms):
@@ -147,7 +148,7 @@ def write_source_file(fp, vt, swt, intlist, syms):
     nv = intlist["num_vectors"]
 
     if vt:
-        fp.write("uint32_t __irq_vector_table _irq_vector_table[%d] = {\n" % nv)
+        fp.write("uintptr_t __irq_vector_table _irq_vector_table[%d] = {\n" % nv)
         for i in range(nv):
             fp.write("\t{},\n".format(vt[i]))
         fp.write("};\n")
@@ -175,7 +176,7 @@ def write_source_file(fp, vt, swt, intlist, syms):
             fp.write("\t/* Level 3 interrupts start here (offset: {}) */\n".
                      format(level3_offset))
 
-        fp.write("\t{{(void *){0:#x}, (void *){1}}},\n".format(param, func_as_string))
+        fp.write("\t{{(const void *){0:#x}, (ISR){1}}},\n".format(param, func_as_string))
     fp.write("};\n")
 
 def get_symbols(obj):
@@ -258,6 +259,9 @@ def main():
             if param != 0:
                 error("Direct irq %d declared, but has non-NULL parameter"
                         % irq)
+            if not 0 <= irq - offset < len(vt):
+                error("IRQ %d (offset=%d) exceeds the maximum of %d" %
+                      (irq - offset, offset, len(vt) - 1))
             vt[irq - offset] = func
         else:
             # Regular interrupt
@@ -301,6 +305,9 @@ def main():
                     debug('IRQ_Pos  = ' + str(irq1))
                     table_index = irq1 - offset
 
+            if not 0 <= table_index < len(swt):
+                error("IRQ %d (offset=%d) exceeds the maximum of %d" %
+                      (table_index, offset, len(swt) - 1))
             if swt[table_index] != (0, spurious_handler):
                 error(f"multiple registrations at table_index {table_index} for irq {irq} (0x{irq:x})"
                       + f"\nExisting handler 0x{swt[table_index][1]:x}, new handler 0x{func:x}"

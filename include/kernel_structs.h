@@ -23,16 +23,16 @@
 #if !defined(_ASMLANGUAGE)
 #include <sys/atomic.h>
 #include <zephyr/types.h>
-#include <sched_priq.h>
+#include <kernel/sched_priq.h>
 #include <sys/dlist.h>
 #include <sys/util.h>
 #include <sys/sys_heap.h>
+#include <arch/structs.h>
 #endif
 
-#define K_NUM_PRIORITIES \
-	(CONFIG_NUM_COOP_PRIORITIES + CONFIG_NUM_PREEMPT_PRIORITIES + 1)
-
-#define K_NUM_PRIO_BITMAPS ((K_NUM_PRIORITIES + 31) >> 5)
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
  * Bitmask definitions for the struct k_thread.thread_state field.
@@ -58,11 +58,8 @@
 /* Thread is suspended */
 #define _THREAD_SUSPENDED (BIT(4))
 
-/* Thread is being aborted (SMP only) */
+/* Thread is being aborted */
 #define _THREAD_ABORTING (BIT(5))
-
-/* Thread was aborted in interrupt context (SMP only) */
-#define _THREAD_ABORTED_IN_ISR (BIT(6))
 
 /* Thread is present in the ready queue */
 #define _THREAD_QUEUED (BIT(7))
@@ -75,10 +72,10 @@
 #endif
 
 /* lowest value of _thread_base.preempt at which a thread is non-preemptible */
-#define _NON_PREEMPT_THRESHOLD 0x0080
+#define _NON_PREEMPT_THRESHOLD 0x0080U
 
 /* highest value of _thread_base.preempt at which a thread is preemptible */
-#define _PREEMPT_THRESHOLD (_NON_PREEMPT_THRESHOLD - 1)
+#define _PREEMPT_THRESHOLD (_NON_PREEMPT_THRESHOLD - 1U)
 
 #if !defined(_ASMLANGUAGE)
 
@@ -128,6 +125,9 @@ struct _cpu {
 	/* True when _current is allowed to context switch */
 	uint8_t swap_ok;
 #endif
+
+	/* Per CPU architecture specifics */
+	struct _cpu_arch arch;
 };
 
 typedef struct _cpu _cpu_t;
@@ -135,12 +135,7 @@ typedef struct _cpu _cpu_t;
 struct z_kernel {
 	struct _cpu cpus[CONFIG_MP_NUM_CPUS];
 
-#ifdef CONFIG_SYS_CLOCK_EXISTS
-	/* queue of timeouts */
-	sys_dlist_t timeout_q;
-#endif
-
-#ifdef CONFIG_SYS_POWER_MANAGEMENT
+#ifdef CONFIG_PM
 	int32_t idle; /* Number of ticks for kernel idling */
 #endif
 
@@ -182,14 +177,12 @@ bool z_smp_cpu_mobile(void);
 
 #define _current_cpu ({ __ASSERT_NO_MSG(!z_smp_cpu_mobile()); \
 			arch_curr_cpu(); })
-#define _current k_current_get()
+#define _current z_current_get()
 
 #else
 #define _current_cpu (&_kernel.cpus[0])
 #define _current _kernel.cpus[0].current
 #endif
-
-#define _timeout_q _kernel.timeout_q
 
 /* kernel wait queue record */
 
@@ -223,52 +216,15 @@ struct _timeout {
 	_timeout_func_t fn;
 #ifdef CONFIG_TIMEOUT_64BIT
 	/* Can't use k_ticks_t for header dependency reasons */
-	uint64_t dticks;
+	int64_t dticks;
 #else
-	uint32_t dticks;
+	int32_t dticks;
 #endif
 };
 
-/* kernel spinlock type */
-
-struct k_spinlock {
-#ifdef CONFIG_SMP
-	atomic_t locked;
+#ifdef __cplusplus
+}
 #endif
-
-#ifdef CONFIG_SPIN_VALIDATE
-	/* Stores the thread that holds the lock with the locking CPU
-	 * ID in the bottom two bits.
-	 */
-	uintptr_t thread_cpu;
-#endif
-
-#if defined(CONFIG_CPLUSPLUS) && !defined(CONFIG_SMP) && \
-	!defined(CONFIG_SPIN_VALIDATE)
-	/* If CONFIG_SMP and CONFIG_SPIN_VALIDATE are both not defined
-	 * the k_spinlock struct will have no members. The result
-	 * is that in C sizeof(k_spinlock) is 0 and in C++ it is 1.
-	 *
-	 * This size difference causes problems when the k_spinlock
-	 * is embedded into another struct like k_msgq, because C and
-	 * C++ will have different ideas on the offsets of the members
-	 * that come after the k_spinlock member.
-	 *
-	 * To prevent this we add a 1 byte dummy member to k_spinlock
-	 * when the user selects C++ support and k_spinlock would
-	 * otherwise be empty.
-	 */
-	char dummy;
-#endif
-};
-
-/* kernel synchronized heap struct */
-
-struct k_heap {
-	struct sys_heap heap;
-	_wait_q_t wait_q;
-	struct k_spinlock lock;
-};
 
 #endif /* _ASMLANGUAGE */
 

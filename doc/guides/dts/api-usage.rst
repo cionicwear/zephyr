@@ -5,8 +5,8 @@ Devicetree access from C/C++
 
 This guide describes Zephyr's ``<devicetree.h>`` API for reading the devicetree
 from C source files. It assumes you're familiar with the concepts in
-:ref:`devicetree-intro` and :ref:`dt-bindings`. See :ref:`devicetree_api` for
-API reference documentation.
+:ref:`devicetree-intro` and :ref:`dt-bindings`. See :ref:`devicetree` for
+reference material.
 
 A note for Linux developers
 ***************************
@@ -73,7 +73,7 @@ Here's a DTS fragment for some imaginary hardware we'll return to throughout
 this file for examples:
 
 .. literalinclude:: main-example.dts
-   :language: DTS
+   :language: devicetree
    :start-after: start-after-here
 
 Here are a few ways to get node identifiers for the ``i2c@40002000`` node:
@@ -174,11 +174,17 @@ number 0 or 1 in the case of booleans. For example:
 
    DT_PROP(I2C1, status)  /* expands to the string literal "okay" */
 
+.. note::
+
+   Don't use DT_NODE_HAS_PROP() for boolean properties. Use DT_PROP() instead
+   as shown above. It will expand to either 0 or 1 depending on if the property
+   is present or absent.
+
 Properties with type ``array``, ``uint8-array``, and ``string-array`` work
 similarly, except ``DT_PROP()`` expands to an array initializer in these cases.
 Here is an example devicetree fragment:
 
-.. code-block:: DTS
+.. code-block:: devicetree
 
    foo: foo@1234 {
            a = <1000 2000 3000>; /* array */
@@ -303,8 +309,9 @@ See :ref:`dt-get-device` for ways to do that.
 
 Another common use case is accessing specifier values in a phandle array. The
 general purpose APIs for this are :c:func:`DT_PHA_BY_IDX` and :c:func:`DT_PHA`.
-There are also hardware-specific shorthands like :c:func:`DT_GPIO_LABEL_BY_IDX`,
-:c:func:`DT_GPIO_LABEL`, :c:func:`DT_GPIO_PIN_BY_IDX`, :c:func:`DT_GPIO_PIN`,
+There are also hardware-specific shorthands like :c:func:`DT_GPIO_CTLR_BY_IDX`,
+:c:func:`DT_GPIO_CTLR`, :c:func:`DT_GPIO_LABEL_BY_IDX`, :c:func:`DT_GPIO_LABEL`,
+:c:func:`DT_GPIO_PIN_BY_IDX`, :c:func:`DT_GPIO_PIN`,
 :c:func:`DT_GPIO_FLAGS_BY_IDX`, and :c:func:`DT_GPIO_FLAGS`.
 
 See :c:func:`DT_PHA_HAS_CELL_AT_IDX` and :c:func:`DT_PROP_HAS_IDX` for ways to

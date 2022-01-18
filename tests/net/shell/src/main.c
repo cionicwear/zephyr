@@ -58,18 +58,18 @@ struct net_udp_context {
 	struct net_linkaddr ll_addr;
 };
 
-int net_udp_dev_init(struct device *dev)
+int net_udp_dev_init(const struct device *dev)
 {
-	struct net_udp_context *net_udp_context = dev->driver_data;
+	struct net_udp_context *net_udp_context = dev->data;
 
 	net_udp_context = net_udp_context;
 
 	return 0;
 }
 
-static uint8_t *net_udp_get_mac(struct device *dev)
+static uint8_t *net_udp_get_mac(const struct device *dev)
 {
-	struct net_udp_context *context = dev->driver_data;
+	struct net_udp_context *context = dev->data;
 
 	if (context->mac_addr[2] == 0x00) {
 		/* 00-00-5E-00-53-xx Documentation RFC 7042 */
@@ -93,7 +93,7 @@ static void net_udp_iface_init(struct net_if *iface)
 
 static int send_status = -EINVAL;
 
-static int tester_send(struct device *dev, struct net_pkt *pkt)
+static int tester_send(const struct device *dev, struct net_pkt *pkt)
 {
 	if (!pkt->frags) {
 		DBG("No data to send!\n");
@@ -136,14 +136,14 @@ static struct dummy_api net_udp_if_api = {
 #define _ETH_L2_CTX_TYPE NET_L2_GET_CTX_TYPE(DUMMY_L2)
 
 NET_DEVICE_INIT(net_udp_test, "net_udp_test",
-		net_udp_dev_init, device_pm_control_nop,
+		net_udp_dev_init, NULL,
 		&net_udp_context_data, NULL,
 		CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
 		&net_udp_if_api, _ETH_L2_LAYER, _ETH_L2_CTX_TYPE, 127);
 
 static void test_setup(void)
 {
-	struct net_if *iface = net_if_get_default();
+	struct net_if *iface;
 	struct net_if_addr *ifaddr;
 
 	struct sockaddr_in6 any_addr6;
@@ -166,6 +166,7 @@ static void test_setup(void)
 	struct sockaddr_in peer_addr4;
 	struct in_addr in4addr_peer = { { { 192, 0, 2, 9 } } };
 
+	iface = net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY));
 	test_failed = false;
 
 	net_ipaddr_copy(&any_addr6.sin6_addr, &in6addr_any);

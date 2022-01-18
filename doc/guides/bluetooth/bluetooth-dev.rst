@@ -57,11 +57,11 @@ application:
 
 .. code-block:: console
 
-   CONFIG_BT_DEBUG_MONITOR=y
+   CONFIG_BT_DEBUG_MONITOR_UART=y
    CONFIG_UART_CONSOLE=n
 
-Setting :option:`CONFIG_BT_DEBUG_MONITOR` to ``y`` replaces the
-:option:`CONFIG_BT_DEBUG_LOG` option, and setting :option:`CONFIG_UART_CONSOLE`
+Setting :kconfig:`CONFIG_BT_DEBUG_MONITOR_UART` to ``y`` replaces the
+:kconfig:`CONFIG_BT_DEBUG_LOG` option, and setting :kconfig:`CONFIG_UART_CONSOLE`
 to ``n`` disables the default ``printk``/``printf`` hooks.
 
 To decode the binary protocol that will now be sent to the console UART you need
@@ -97,7 +97,7 @@ which is comprised of the following devices:
      <wrn> bt_hci_core: opcode 0x0c33 status 0x12
 
    when booting your sample of choice (make sure you have enabled
-   :option:`CONFIG_BT_DEBUG_LOG` in your :file:`prj.conf` before running the
+   :kconfig:`CONFIG_BT_DEBUG_LOG` in your :file:`prj.conf` before running the
    sample), or if there is no data flowing from the Controller to the Host, then
    you need to disable Host to Controller flow control. To do so, set
    ``CONFIG_BT_HCI_ACL_FLOW_CONTROL=n`` in your :file:`prj.conf`.
@@ -156,10 +156,10 @@ another real or simulated device.
 Initialization
 **************
 
-The Bluetooth subsystem is initialized using the :cpp:func:`bt_enable`
+The Bluetooth subsystem is initialized using the :c:func:`bt_enable`
 function. The caller should ensure that function succeeds by checking
 the return code for errors. If a function pointer is passed to
-:cpp:func:`bt_enable`, the initialization happens asynchronously, and the
+:c:func:`bt_enable`, the initialization happens asynchronously, and the
 completion is notified through the given function.
 
 Bluetooth Application Example
@@ -174,8 +174,8 @@ advertising, effectively acting as a Bluetooth Low Energy broadcaster.
    :lines: 19-
    :linenos:
 
-The key APIs employed by the beacon sample are :cpp:func:`bt_enable`
-that's used to initialize Bluetooth and then :cpp:func:`bt_le_adv_start`
+The key APIs employed by the beacon sample are :c:func:`bt_enable`
+that's used to initialize Bluetooth and then :c:func:`bt_le_adv_start`
 that's used to start advertising a specific combination of advertising
 and scan response data.
 

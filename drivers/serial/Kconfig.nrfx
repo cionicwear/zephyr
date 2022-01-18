@@ -36,6 +36,14 @@ config UART_0_NRF_UARTE
 
 if UART_0_NRF_UART || UART_0_NRF_UARTE
 
+config UART_0_ENHANCED_POLL_OUT
+	bool "Efficient poll out on port 0"
+	default y
+	depends on UART_0_NRF_UARTE
+	help
+	  When enabled, polling out does not trigger interrupt which stops TX.
+	  Feature uses a PPI channel.
+
 config UART_0_INTERRUPT_DRIVEN
 	bool "Enable interrupt support on port 0"
 	depends on UART_INTERRUPT_DRIVEN
@@ -75,13 +83,22 @@ config UART_0_NRF_HW_ASYNC
 	  It is recommended to use hardware byte counting in such scenarios.
 	  Hardware RX byte counting requires timer instance and one PPI channel
 
+config UART_0_NRF_ASYNC_LOW_POWER
+	bool "Low power mode"
+	depends on UART_0_NRF_UARTE
+	depends on UART_ASYNC_API
+	help
+	  When enabled, UARTE is enabled before each TX or RX usage and disabled
+	  when not used. Disabling UARTE while in idle allows to achieve lowest
+	  power consumption. It is only feasible if receiver is not always on.
+
 config UART_0_NRF_HW_ASYNC_TIMER
 	int "Timer instance"
 	depends on UART_0_NRF_HW_ASYNC
 
 config UART_0_GPIO_MANAGEMENT
 	bool "Enable GPIO management on port 0"
-	depends on DEVICE_POWER_MANAGEMENT
+	depends on PM_DEVICE
 	default y
 	help
 	  If enabled, the driver will configure the GPIOs used by the uart to
@@ -113,6 +130,13 @@ config UART_1_ASYNC
 	help
 	  This option enables UART Asynchronous API support on port 1.
 
+config UART_1_ENHANCED_POLL_OUT
+	bool "Efficient poll out on port 1"
+	default y
+	help
+	  When enabled, polling out does not trigger interrupt which stops TX.
+	  Feature uses a PPI channel.
+
 config UART_1_NRF_PARITY_BIT
 	bool "Enable parity bit"
 	help
@@ -137,13 +161,21 @@ config UART_1_NRF_HW_ASYNC
 	  It is recommended to use hardware byte counting in such scenarios.
 	  Hardware RX byte counting requires timer instance and one PPI channel
 
+config UART_1_NRF_ASYNC_LOW_POWER
+	bool "Low power mode"
+	depends on UART_ASYNC_API
+	help
+	  When enabled, UARTE is enabled before each TX or RX usage and disabled
+	  when not used. Disabling UARTE while in idle allows to achieve lowest
+	  power consumption. It is only feasible if receiver is not always on.
+
 config UART_1_NRF_HW_ASYNC_TIMER
 	int "Timer instance"
 	depends on UART_1_NRF_HW_ASYNC
 
 config UART_1_GPIO_MANAGEMENT
 	bool "Enable GPIO management on port 1"
-	depends on DEVICE_POWER_MANAGEMENT
+	depends on PM_DEVICE
 	default y
 	help
 	  If enabled, the driver will configure the GPIOs used by the uart to
@@ -175,6 +207,13 @@ config UART_2_ASYNC
 	help
 	  This option enables UART Asynchronous API support on port 2.
 
+config UART_2_ENHANCED_POLL_OUT
+	bool "Efficient poll out on port 2"
+	default y
+	help
+	  When enabled, polling out does not trigger interrupt which stops TX.
+	  Feature uses a PPI channel.
+
 config UART_2_NRF_PARITY_BIT
 	bool "Enable parity bit"
 	help
@@ -198,13 +237,21 @@ config UART_2_NRF_HW_ASYNC
 	  It is recommended to use hardware byte counting in such scenarios.
 	  Hardware RX byte counting requires timer instance and one PPI channel
 
+config UART_2_NRF_ASYNC_LOW_POWER
+	bool "Low power mode"
+	depends on UART_ASYNC_API
+	help
+	  When enabled, UARTE is enabled before each TX or RX usage and disabled
+	  when not used. Disabling UARTE while in idle allows to achieve lowest
+	  power consumption. It is only feasible if receiver is not always on.
+
 config UART_2_NRF_HW_ASYNC_TIMER
 	int "Timer instance"
 	depends on UART_2_NRF_HW_ASYNC
 
 config UART_2_GPIO_MANAGEMENT
 	bool "Enable GPIO management on port 2"
-	depends on DEVICE_POWER_MANAGEMENT
+	depends on PM_DEVICE
 	default y
 	help
 	  If enabled, the driver will configure the GPIOs used by the uart to
@@ -236,6 +283,13 @@ config UART_3_ASYNC
 	help
 	  This option enables UART Asynchronous API support on port 3.
 
+config UART_3_ENHANCED_POLL_OUT
+	bool "Efficient poll out on port 3"
+	default y
+	help
+	  When enabled, polling out does not trigger interrupt which stops TX.
+	  Feature uses a PPI channel.
+
 config UART_3_NRF_PARITY_BIT
 	bool "Enable parity bit"
 	help
@@ -259,13 +313,21 @@ config UART_3_NRF_HW_ASYNC
 	  It is recommended to use hardware byte counting in such scenarios.
 	  Hardware RX byte counting requires timer instance and one PPI channel
 
+config UART_3_NRF_ASYNC_LOW_POWER
+	bool "Low power mode"
+	depends on UART_ASYNC_API
+	help
+	  When enabled, UARTE is enabled before each TX or RX usage and disabled
+	  when not used. Disabling UARTE while in idle allows to achieve lowest
+	  power consumption. It is only feasible if receiver is not always on.
+
 config UART_3_NRF_HW_ASYNC_TIMER
 	int "Timer instance"
 	depends on UART_3_NRF_HW_ASYNC
 
 config UART_3_GPIO_MANAGEMENT
 	bool "Enable GPIO management on port 3"
-	depends on DEVICE_POWER_MANAGEMENT
+	depends on PM_DEVICE
 	default y
 	help
 	  If enabled, the driver will configure the GPIOs used by the uart to
@@ -317,6 +379,17 @@ config NRFX_DPPI
 config UARTE_NRF_HW_ASYNC
 	bool
 	default y
+
+endif
+
+if UART_0_ENHANCED_POLL_OUT || UART_1_ENHANCED_POLL_OUT || \
+	UART_2_ENHANCED_POLL_OUT || UART_3_ENHANCED_POLL_OUT
+
+config UART_ENHANCED_POLL_OUT
+	bool
+	default y
+	select NRFX_PPI if HAS_HW_NRF_PPI
+	select NRFX_DPPI if HAS_HW_NRF_DPPIC
 
 endif
 

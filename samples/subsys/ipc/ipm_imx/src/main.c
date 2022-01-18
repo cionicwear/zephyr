@@ -9,9 +9,8 @@
 #include <device.h>
 #include <drivers/ipm.h>
 
-static struct device *ipm;
-
-static void ipm_callback(void *context, uint32_t id, volatile void *data)
+static void ipm_callback(const struct device *dev, void *context,
+			 uint32_t id, volatile void *data)
 {
 	int i;
 	int status;
@@ -23,7 +22,7 @@ static void ipm_callback(void *context, uint32_t id, volatile void *data)
 	}
 	printk("\n");
 
-	status = ipm_send(ipm, 1, id, (const void *)data,
+	status = ipm_send(dev, 1, id, (const void *)data,
 			  CONFIG_IPM_IMX_MAX_DATA_SIZE);
 	if (status) {
 		printk("ipm_send() failed: %d\n", status);
@@ -32,8 +31,10 @@ static void ipm_callback(void *context, uint32_t id, volatile void *data)
 
 void main(void)
 {
-	ipm = device_get_binding("MU_B");
-	if (!ipm) {
+	const struct device *ipm;
+
+	ipm = DEVICE_DT_GET(DT_NODELABEL(mub));
+	if (!device_is_ready(ipm)) {
 		while (1) {
 		}
 	}

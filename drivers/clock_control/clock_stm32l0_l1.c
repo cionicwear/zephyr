@@ -7,13 +7,16 @@
 
 
 #include <soc.h>
+#include <stm32_ll_bus.h>
+#include <stm32_ll_rcc.h>
+#include <stm32_ll_utils.h>
 #include <drivers/clock_control.h>
 #include <sys/util.h>
 #include <drivers/clock_control/stm32_clock_control.h>
 #include "clock_stm32_ll_common.h"
 
 
-#ifdef CONFIG_CLOCK_STM32_SYSCLK_SRC_PLL
+#if STM32_SYSCLK_SRC_PLL
 
 /* Macros to fill up multiplication and division factors values */
 #define z_pll_mul(v) LL_RCC_PLL_MUL_ ## v
@@ -27,11 +30,11 @@
  */
 void config_pll_init(LL_UTILS_PLLInitTypeDef *pllinit)
 {
-	pllinit->PLLMul = pll_mul(CONFIG_CLOCK_STM32_PLL_MULTIPLIER);
-	pllinit->PLLDiv = pll_div(CONFIG_CLOCK_STM32_PLL_DIVISOR);
+	pllinit->PLLMul = pll_mul(STM32_PLL_MULTIPLIER);
+	pllinit->PLLDiv = pll_div(STM32_PLL_DIVISOR);
 }
 
-#endif /* CONFIG_CLOCK_STM32_SYSCLK_SRC_PLL */
+#endif /* STM32_SYSCLK_SRC_PLL */
 
 /**
  * @brief Activate default clocks

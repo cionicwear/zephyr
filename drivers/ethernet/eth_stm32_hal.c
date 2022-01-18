@@ -26,6 +26,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <sys/printk.h>
 #include <drivers/clock_control.h>
 #include <drivers/clock_control/stm32_clock_control.h>
+#include <pinmux/pinmux_stm32.h>
 
 #include "eth.h"
 #include "eth_stm32_hal_priv.h"
@@ -52,8 +53,10 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #define ETH_MEDIA_INTERFACE_MII		HAL_ETH_MII_MODE
 #define ETH_MEDIA_INTERFACE_RMII	HAL_ETH_RMII_MODE
 
-#define ETH_DMA_TRANSMIT_TIMEOUT	20U  /* transmit timeout in sys tiks */
+#define ETH_DMA_TX_TIMEOUT_MS	20U  /* transmit timeout in milliseconds */
 
+/* Only one tx_buffer is sufficient to pass only 1 dma_buffer */
+#define ETH_TXBUF_DEF_NB	1U
 #else
 
 #define GET_FIRST_DMA_TX_DESC(heth)	(heth->TxDesc)
@@ -64,24 +67,27 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #if defined(CONFIG_ETH_STM32_HAL_USE_DTCM_FOR_DMA_BUFFER) && \
 	    DT_NODE_HAS_STATUS(DT_CHOSEN(zephyr_dtcm), okay)
-#define ETH_DMA_MEM	__dtcm_noinit_section
+#define __eth_stm32_desc __dtcm_noinit_section
+#define __eth_stm32_buf  __dtcm_noinit_section
+#elif defined(CONFIG_SOC_SERIES_STM32H7X) && \
+		DT_NODE_HAS_STATUS(DT_NODELABEL(sram3), okay)
+#define __eth_stm32_desc __attribute__((section(".eth_stm32_desc")))
+#define __eth_stm32_buf  __attribute__((section(".eth_stm32_buf")))
+#elif defined(CONFIG_NOCACHE_MEMORY)
+#define __eth_stm32_desc __nocache __aligned(4)
+#define __eth_stm32_buf  __nocache __aligned(4)
 #else
-#define ETH_DMA_MEM	__aligned(4)
-#endif /* CONFIG_ETH_STM32_HAL_USE_DTCM_FOR_DMA_BUFFER */
-
-#if defined(CONFIG_NOCACHE_MEMORY)
-#define CACHE __nocache
-#else
-#define CACHE
+#define __eth_stm32_desc __aligned(4)
+#define __eth_stm32_buf  __aligned(4)
 #endif
 
-static ETH_DMADescTypeDef dma_rx_desc_tab[ETH_RXBUFNB] CACHE ETH_DMA_MEM;
-static ETH_DMADescTypeDef dma_tx_desc_tab[ETH_TXBUFNB] CACHE ETH_DMA_MEM;
-static uint8_t dma_rx_buffer[ETH_RXBUFNB][ETH_RX_BUF_SIZE] CACHE ETH_DMA_MEM;
-static uint8_t dma_tx_buffer[ETH_TXBUFNB][ETH_TX_BUF_SIZE] CACHE ETH_DMA_MEM;
+static ETH_DMADescTypeDef dma_rx_desc_tab[ETH_RXBUFNB] __eth_stm32_desc;
+static ETH_DMADescTypeDef dma_tx_desc_tab[ETH_TXBUFNB] __eth_stm32_desc;
+static uint8_t dma_rx_buffer[ETH_RXBUFNB][ETH_RX_BUF_SIZE] __eth_stm32_buf;
+static uint8_t dma_tx_buffer[ETH_TXBUFNB][ETH_TX_BUF_SIZE] __eth_stm32_buf;
 
 #if defined(CONFIG_SOC_SERIES_STM32H7X)
-static ETH_TxPacketConfig tx_config CACHE;
+static ETH_TxPacketConfig tx_config;
 #endif
 
 #if defined(CONFIG_NET_L2_CANBUS_ETH_TRANSLATOR)
@@ -163,7 +169,7 @@ static inline void disable_mcast_filter(ETH_HandleTypeDef *heth)
 #endif /* CONFIG_SOC_SERIES_STM32H7X) */
 }
 
-static int eth_tx(struct device *dev, struct net_pkt *pkt)
+static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 {
 	struct eth_stm32_hal_dev_data *dev_data = DEV_DATA(dev);
 	ETH_HandleTypeDef *heth;
@@ -184,7 +190,7 @@ static int eth_tx(struct device *dev, struct net_pkt *pkt)
 
 	total_len = net_pkt_get_len(pkt);
 	if (total_len > ETH_TX_BUF_SIZE) {
-		LOG_ERR("PKT to big");
+		LOG_ERR("PKT too big");
 		res = -EIO;
 		goto error;
 	}
@@ -205,14 +211,14 @@ static int eth_tx(struct device *dev, struct net_pkt *pkt)
 #endif /* CONFIG_SOC_SERIES_STM32H7X */
 
 	if (net_pkt_read(pkt, dma_buffer, total_len)) {
-		res = -EIO;
+		res = -ENOBUFS;
 		goto error;
 	}
 
 #if defined(CONFIG_SOC_SERIES_STM32H7X)
-	ETH_BufferTypeDef tx_buffer_def[ETH_TXBUFNB];
+	ETH_BufferTypeDef tx_buffer_def[ETH_TXBUF_DEF_NB];
 
-	memset(tx_buffer_def, 0, ETH_TXBUFNB*sizeof(ETH_BufferTypeDef));
+	memset(tx_buffer_def, 0, ETH_TXBUF_DEF_NB*sizeof(ETH_BufferTypeDef));
 
 	tx_buffer_def[cur_tx_desc_idx].buffer = dma_buffer;
 	tx_buffer_def[cur_tx_desc_idx].len = total_len;
@@ -221,18 +227,72 @@ static int eth_tx(struct device *dev, struct net_pkt *pkt)
 	tx_config.Length = total_len;
 	tx_config.TxBuffer = tx_buffer_def;
 
-	hal_ret = HAL_ETH_Transmit(heth, &tx_config, ETH_DMA_TRANSMIT_TIMEOUT);
-#else
-	hal_ret = HAL_ETH_TransmitFrame(heth, total_len);
-#endif /* CONFIG_SOC_SERIES_STM32H7X */
+	/* Reset TX complete interrupt semaphore before TX request*/
+	k_sem_reset(&dev_data->tx_int_sem);
+
+	/* tx_buffer is allocated on function stack, we need */
+	/* to wait for the transfer to complete */
+	/* So it is not freed before the interrupt happens */
+	hal_ret = HAL_ETH_Transmit_IT(heth, &tx_config);
 
 	if (hal_ret != HAL_OK) {
-		LOG_ERR("HAL_ETH_Transmit{Frame}: failed!");
+		LOG_ERR("HAL_ETH_Transmit: failed!");
 		res = -EIO;
 		goto error;
 	}
 
-#if !defined(CONFIG_SOC_SERIES_STM32H7X)
+	/* Wait for end of TX buffer transmission */
+	/* If the semaphore timeout breaks, it means */
+	/* an error occurred or IT was not fired */
+	if (k_sem_take(&dev_data->tx_int_sem,
+			K_MSEC(ETH_DMA_TX_TIMEOUT_MS)) != 0) {
+
+		LOG_ERR("HAL_ETH_TransmitIT tx_int_sem take timeout");
+		res = -EIO;
+
+		/* Content of the packet could be the reason for timeout */
+		LOG_HEXDUMP_ERR(dma_buffer, total_len, "eth packet timeout");
+
+		/* Check for errors */
+		/* Ethernet device was put in error state */
+		/* Error state is unrecoverable ? */
+		if (HAL_ETH_GetState(heth) == HAL_ETH_STATE_ERROR) {
+			LOG_ERR("%s: ETH in error state: errorcode:%x",
+				__func__,
+				HAL_ETH_GetError(heth));
+			/* TODO recover from error state by restarting eth */
+		}
+
+		/* Check for DMA errors */
+		if (HAL_ETH_GetDMAError(heth)) {
+			LOG_ERR("%s: ETH DMA error: dmaerror:%x",
+				__func__,
+				HAL_ETH_GetDMAError(heth));
+			/* DMA fatal bus errors are putting in error state*/
+			/* TODO recover from this */
+		}
+
+		/* Check for MAC errors */
+		if (HAL_ETH_GetDMAError(heth)) {
+			LOG_ERR("%s: ETH DMA error: macerror:%x",
+				__func__,
+				HAL_ETH_GetDMAError(heth));
+			/* MAC errors are putting in error state*/
+			/* TODO recover from this */
+		}
+
+		goto error;
+	}
+
+#else
+	hal_ret = HAL_ETH_TransmitFrame(heth, total_len);
+
+	if (hal_ret != HAL_OK) {
+		LOG_ERR("HAL_ETH_Transmit: failed!");
+		res = -EIO;
+		goto error;
+	}
+
 	/* When Transmit Underflow flag is set, clear it and issue a
 	 * Transmit Poll Demand to resume transmission.
 	 */
@@ -272,7 +332,7 @@ static struct net_if *get_iface(struct eth_stm32_hal_dev_data *ctx,
 #endif
 }
 
-static struct net_pkt *eth_rx(struct device *dev, uint16_t *vlan_tag)
+static struct net_pkt *eth_rx(const struct device *dev, uint16_t *vlan_tag)
 {
 	struct eth_stm32_hal_dev_data *dev_data;
 	ETH_HandleTypeDef *heth;
@@ -329,7 +389,7 @@ static struct net_pkt *eth_rx(struct device *dev, uint16_t *vlan_tag)
 #endif /* CONFIG_SOC_SERIES_STM32H7X */
 
 	pkt = net_pkt_rx_alloc_with_buffer(get_iface(dev_data, *vlan_tag),
-					   total_len, AF_UNSPEC, 0, K_NO_WAIT);
+					   total_len, AF_UNSPEC, 0, K_MSEC(100));
 	if (!pkt) {
 		LOG_ERR("Failed to obtain RX buffer");
 		goto release_desc;
@@ -404,7 +464,7 @@ release_desc:
 static void rx_thread(void *arg1, void *unused1, void *unused2)
 {
 	uint16_t vlan_tag = NET_VLAN_TAG_UNSPEC;
-	struct device *dev;
+	const struct device *dev;
 	struct eth_stm32_hal_dev_data *dev_data;
 	struct net_pkt *pkt;
 	int res;
@@ -415,7 +475,7 @@ static void rx_thread(void *arg1, void *unused1, void *unused2)
 	ARG_UNUSED(unused1);
 	ARG_UNUSED(unused2);
 
-	dev = (struct device *)arg1;
+	dev = (const struct device *)arg1;
 	dev_data = DEV_DATA(dev);
 
 	__ASSERT_NO_MSG(dev_data != NULL);
@@ -465,15 +525,13 @@ static void rx_thread(void *arg1, void *unused1, void *unused2)
 	}
 }
 
-static void eth_isr(void *arg)
+static void eth_isr(const struct device *dev)
 {
-	struct device *dev;
 	struct eth_stm32_hal_dev_data *dev_data;
 	ETH_HandleTypeDef *heth;
 
-	__ASSERT_NO_MSG(arg != NULL);
+	__ASSERT_NO_MSG(dev != NULL);
 
-	dev = (struct device *)arg;
 	dev_data = DEV_DATA(dev);
 
 	__ASSERT_NO_MSG(dev_data != NULL);
@@ -484,7 +542,66 @@ static void eth_isr(void *arg)
 
 	HAL_ETH_IRQHandler(heth);
 }
+#ifdef CONFIG_SOC_SERIES_STM32H7X
+void HAL_ETH_TxCpltCallback(ETH_HandleTypeDef *heth_handle)
+{
+	__ASSERT_NO_MSG(heth_handle != NULL);
 
+	struct eth_stm32_hal_dev_data *dev_data =
+		CONTAINER_OF(heth_handle, struct eth_stm32_hal_dev_data, heth);
+
+	__ASSERT_NO_MSG(dev_data != NULL);
+
+	k_sem_give(&dev_data->tx_int_sem);
+
+}
+/* DMA and MAC errors callback only appear in H7 series */
+void HAL_ETH_DMAErrorCallback(ETH_HandleTypeDef *heth_handle)
+{
+	__ASSERT_NO_MSG(heth_handle != NULL);
+
+	LOG_ERR("%s errorcode:%x dmaerror:%x",
+		__func__,
+		HAL_ETH_GetError(heth_handle),
+		HAL_ETH_GetDMAError(heth_handle));
+
+	/* State of eth handle is ERROR in case of unrecoverable error */
+	/* unrecoverable (ETH_DMACSR_FBE | ETH_DMACSR_TPS | ETH_DMACSR_RPS) */
+	if (HAL_ETH_GetState(heth_handle) == HAL_ETH_STATE_ERROR) {
+		LOG_ERR("%s ethernet in error state", __func__);
+		/* TODO restart the ETH peripheral to recover */
+		return;
+	}
+
+	/* Recoverable errors don't put ETH in error state */
+	/* ETH_DMACSR_CDE | ETH_DMACSR_ETI | ETH_DMACSR_RWT */
+	/* | ETH_DMACSR_RBU | ETH_DMACSR_AIS) */
+
+	/* TODO Check if we were TX transmitting and the unlock semaphore */
+	/* To return the error as soon as possible else we'll just wait */
+	/* for the timeout */
+
+
+}
+void HAL_ETH_MACErrorCallback(ETH_HandleTypeDef *heth_handle)
+{
+	__ASSERT_NO_MSG(heth_handle != NULL);
+
+	/* MAC errors dumping */
+	LOG_ERR("%s errorcode:%x macerror:%x",
+		__func__,
+		HAL_ETH_GetError(heth_handle),
+		HAL_ETH_GetMACError(heth_handle));
+
+	/* State of eth handle is ERROR in case of unrecoverable error */
+	if (HAL_ETH_GetState(heth_handle) == HAL_ETH_STATE_ERROR) {
+		LOG_ERR("%s ethernet in error state", __func__);
+		/* TODO restart or reconfig ETH peripheral to recover */
+
+		return;
+	}
+}
+#endif /* CONFIG_SOC_SERIES_STM32H7X */
 
 void HAL_ETH_RxCpltCallback(ETH_HandleTypeDef *heth_handle)
 {
@@ -505,7 +622,7 @@ static void generate_mac(uint8_t *mac_addr)
 }
 #endif
 
-static int eth_initialize(struct device *dev)
+static int eth_initialize(const struct device *dev)
 {
 	struct eth_stm32_hal_dev_data *dev_data;
 	const struct eth_stm32_hal_dev_cfg *cfg;
@@ -521,8 +638,7 @@ static int eth_initialize(struct device *dev)
 	__ASSERT_NO_MSG(dev_data != NULL);
 	__ASSERT_NO_MSG(cfg != NULL);
 
-	dev_data->clock = device_get_binding(STM32_CLOCK_CONTROL_NAME);
-	__ASSERT_NO_MSG(dev_data->clock != NULL);
+	dev_data->clock = DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE);
 
 	/* enable clock */
 	ret = clock_control_on(dev_data->clock,
@@ -539,6 +655,14 @@ static int eth_initialize(struct device *dev)
 	if (ret) {
 		LOG_ERR("Failed to enable ethernet clock");
 		return -EIO;
+	}
+
+	/* configure pinmux */
+	ret = stm32_dt_pinctrl_configure(cfg->pinctrl, cfg->pinctrl_len,
+					 (uint32_t)dev_data->heth.Instance);
+	if (ret < 0) {
+		LOG_ERR("Could not configure ethernet pins");
+		return ret;
 	}
 
 	heth = &dev_data->heth;
@@ -582,14 +706,19 @@ static int eth_initialize(struct device *dev)
 
 	/* Initialize semaphores */
 	k_mutex_init(&dev_data->tx_mutex);
-	k_sem_init(&dev_data->rx_int_sem, 0, UINT_MAX);
+	k_sem_init(&dev_data->rx_int_sem, 0, K_SEM_MAX_LIMIT);
+#ifdef CONFIG_SOC_SERIES_STM32H7X
+	k_sem_init(&dev_data->tx_int_sem, 0, K_SEM_MAX_LIMIT);
+#endif /* CONFIG_SOC_SERIES_STM32H7X */
 
 	/* Start interruption-poll thread */
 	k_thread_create(&dev_data->rx_thread, dev_data->rx_thread_stack,
-			K_THREAD_STACK_SIZEOF(dev_data->rx_thread_stack),
+			K_KERNEL_STACK_SIZEOF(dev_data->rx_thread_stack),
 			rx_thread, (void *) dev, NULL, NULL,
 			K_PRIO_COOP(CONFIG_ETH_STM32_HAL_RX_THREAD_PRIO),
 			0, K_NO_WAIT);
+
+	k_thread_name_set(&dev_data->rx_thread, "stm_eth");
 
 #if defined(CONFIG_SOC_SERIES_STM32H7X)
 	for (uint32_t i = 0; i < ETH_RX_DESC_CNT; i++) {
@@ -646,8 +775,9 @@ static int eth_initialize(struct device *dev)
 
 static void eth_iface_init(struct net_if *iface)
 {
-	struct device *dev;
+	const struct device *dev;
 	struct eth_stm32_hal_dev_data *dev_data;
+	bool is_first_init = false;
 
 	__ASSERT_NO_MSG(iface != NULL);
 
@@ -663,10 +793,7 @@ static void eth_iface_init(struct net_if *iface)
 	 */
 	if (dev_data->iface == NULL) {
 		dev_data->iface = iface;
-
-		/* Now that the iface is setup, we are safe to enable IRQs. */
-		__ASSERT_NO_MSG(DEV_CFG(dev)->config_func != NULL);
-		DEV_CFG(dev)->config_func();
+		is_first_init = true;
 	}
 
 	/* Register Ethernet MAC Address with the upper layer */
@@ -677,9 +804,15 @@ static void eth_iface_init(struct net_if *iface)
 	ethernet_init(iface);
 
 	net_if_flag_set(iface, NET_IF_NO_AUTO_START);
+
+	if (is_first_init) {
+		/* Now that the iface is setup, we are safe to enable IRQs. */
+		__ASSERT_NO_MSG(DEV_CFG(dev)->config_func != NULL);
+		DEV_CFG(dev)->config_func();
+	}
 }
 
-static enum ethernet_hw_caps eth_stm32_hal_get_capabilities(struct device *dev)
+static enum ethernet_hw_caps eth_stm32_hal_get_capabilities(const struct device *dev)
 {
 	ARG_UNUSED(dev);
 
@@ -690,7 +823,7 @@ static enum ethernet_hw_caps eth_stm32_hal_get_capabilities(struct device *dev)
 		;
 }
 
-static int eth_stm32_hal_set_config(struct device *dev,
+static int eth_stm32_hal_set_config(const struct device *dev,
 				    enum ethernet_config_type type,
 				    const struct ethernet_config *config)
 {
@@ -709,6 +842,9 @@ static int eth_stm32_hal_set_config(struct device *dev,
 			(dev_data->mac_addr[2] << 16) |
 			(dev_data->mac_addr[1] << 8) |
 			dev_data->mac_addr[0];
+		net_if_set_link_addr(dev_data->iface, dev_data->mac_addr,
+				     sizeof(dev_data->mac_addr),
+				     NET_LINK_ETHERNET);
 		return 0;
 	default:
 		break;
@@ -725,14 +861,14 @@ static const struct ethernet_api eth_api = {
 	.send = eth_tx,
 };
 
-DEVICE_DECLARE(eth0_stm32_hal);
-
 static void eth0_irq_config(void)
 {
 	IRQ_CONNECT(DT_INST_IRQN(0), DT_INST_IRQ(0, priority), eth_isr,
-		    DEVICE_GET(eth0_stm32_hal), 0);
+		    DEVICE_DT_INST_GET(0), 0);
 	irq_enable(DT_INST_IRQN(0));
 }
+
+static const struct soc_gpio_pinctrl eth0_pins[] = ST_STM32_DT_INST_PINCTRL(0, 0);
 
 static const struct eth_stm32_hal_dev_cfg eth0_config = {
 	.config_func = eth0_irq_config,
@@ -746,6 +882,8 @@ static const struct eth_stm32_hal_dev_cfg eth0_config = {
 	.pclken_ptp = {.bus = DT_INST_CLOCKS_CELL_BY_NAME(0, mac_clk_ptp, bus),
 		       .enr = DT_INST_CLOCKS_CELL_BY_NAME(0, mac_clk_ptp, bits)},
 #endif /* !CONFIG_SOC_SERIES_STM32H7X */
+	.pinctrl = eth0_pins,
+	.pinctrl_len = ARRAY_SIZE(eth0_pins),
 };
 
 static struct eth_stm32_hal_dev_data eth0_data = {
@@ -753,7 +891,21 @@ static struct eth_stm32_hal_dev_data eth0_data = {
 		.Instance = (ETH_TypeDef *)DT_INST_REG_ADDR(0),
 		.Init = {
 #if !defined(CONFIG_SOC_SERIES_STM32H7X)
+#if defined(CONFIG_ETH_STM32_AUTO_NEGOTIATION_ENABLE)
 			.AutoNegotiation = ETH_AUTONEGOTIATION_ENABLE,
+#else
+			.AutoNegotiation = ETH_AUTONEGOTIATION_DISABLE,
+#if defined(CONFIG_ETH_STM32_SPEED_10M)
+			.Speed = ETH_SPEED_10M,
+#else
+			.Speed = ETH_SPEED_100M,
+#endif
+#if defined(CONFIG_ETH_STM32_MODE_HALFDUPLEX)
+			.DuplexMode = ETH_MODE_HALFDUPLEX,
+#else
+			.DuplexMode = ETH_MODE_FULLDUPLEX,
+#endif
+#endif /* !CONFIG_ETH_STM32_AUTO_NEGOTIATION_ENABLE */
 			.PhyAddress = PHY_ADDR,
 			.RxMode = ETH_RXINTERRUPT_MODE,
 			.ChecksumMode = ETH_CHECKSUM_BY_SOFTWARE,
@@ -777,6 +929,6 @@ static struct eth_stm32_hal_dev_data eth0_data = {
 	},
 };
 
-ETH_NET_DEVICE_INIT(eth0_stm32_hal, DT_INST_LABEL(0), eth_initialize,
-		    device_pm_control_nop, &eth0_data, &eth0_config,
+ETH_NET_DEVICE_DT_INST_DEFINE(0, eth_initialize,
+		    NULL, &eth0_data, &eth0_config,
 		    CONFIG_ETH_INIT_PRIORITY, &eth_api, ETH_STM32_HAL_MTU);

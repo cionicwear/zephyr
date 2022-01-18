@@ -1,5 +1,3 @@
-/*  Bluetooth Mesh */
-
 /*
  * Copyright (c) 2017 Intel Corporation
  *
@@ -17,3 +15,4 @@ void bt_mesh_beacon_create(struct bt_mesh_subnet *sub,
 			   struct net_buf_simple *buf);
 
 void bt_mesh_beacon_init(void);
+void bt_mesh_beacon_update(struct bt_mesh_subnet *sub);

@@ -123,7 +123,9 @@ static int settings_file_load_priv(struct settings_store *cs, line_load_cb cb,
 
 	lines = 0;
 
-	rc = fs_open(&file, cf->cf_name);
+	fs_file_t_init(&file);
+
+	rc = fs_open(&file, cf->cf_name, FS_O_CREATE | FS_O_RDWR);
 	if (rc != 0) {
 		return -EINVAL;
 	}
@@ -207,7 +209,7 @@ static int settings_file_create_or_replace(struct fs_file_t *zfp,
 		}
 	}
 
-	return fs_open(zfp, file_name);
+	return fs_open(zfp, file_name, FS_O_CREATE | FS_O_RDWR);
 }
 
 /*
@@ -240,7 +242,10 @@ static int settings_file_save_and_compress(struct settings_file *cf,
 	size_t new_name_len;
 	size_t val1_off;
 
-	if (fs_open(&rf, cf->cf_name) != 0) {
+	fs_file_t_init(&rf);
+	fs_file_t_init(&wf);
+
+	if (fs_open(&rf, cf->cf_name, FS_O_CREATE | FS_O_RDWR) != 0) {
 		return -ENOEXEC;
 	}
 
@@ -360,13 +365,15 @@ static int settings_file_save_priv(struct settings_store *cs, const char *name,
 {
 	struct settings_file *cf = (struct settings_file *)cs;
 	struct line_entry_ctx entry_ctx;
-	struct fs_file_t  file;
+	struct fs_file_t file;
 	int rc2;
 	int rc;
 
 	if (!name) {
 		return -EINVAL;
 	}
+
+	fs_file_t_init(&file);
 
 	if (cf->cf_maxlines && (cf->cf_lines + 1 >= cf->cf_maxlines)) {
 		/*
@@ -380,7 +387,7 @@ static int settings_file_save_priv(struct settings_store *cs, const char *name,
 	/*
 	 * Open the file to add this one value.
 	 */
-	rc = fs_open(&file, cf->cf_name);
+	rc = fs_open(&file, cf->cf_name, FS_O_CREATE | FS_O_RDWR);
 	if (rc == 0) {
 		rc = fs_seek(&file, 0, FS_SEEK_END);
 		if (rc == 0) {
@@ -502,6 +509,7 @@ int settings_backend_init(void)
 		.cf_name = CONFIG_SETTINGS_FS_FILE,
 		.cf_maxlines = CONFIG_SETTINGS_FS_MAX_LINES
 	};
+	struct fs_dirent entry;
 	int rc;
 
 
@@ -520,14 +528,10 @@ int settings_backend_init(void)
 	/*
 	 * Must be called after root FS has been initialized.
 	 */
-	rc = fs_mkdir(CONFIG_SETTINGS_FS_DIR);
-
-	/*
-	 * The following lines mask the file exist error.
-	 */
-	if (rc == -EEXIST) {
-		rc = 0;
+	rc = fs_stat(CONFIG_SETTINGS_FS_DIR, &entry);
+	/* If directory doesn't exist, create it */
+	if (rc == -ENOENT) {
+		rc = fs_mkdir(CONFIG_SETTINGS_FS_DIR);
 	}
-
 	return rc;
 }

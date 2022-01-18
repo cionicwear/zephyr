@@ -20,13 +20,34 @@
 
 import argparse
 from collections import defaultdict
+import logging
 import os
 import pathlib
 import pickle
 import re
 import sys
 
-import edtlib
+sys.path.append(os.path.join(os.path.dirname(__file__), 'python-devicetree',
+                             'src'))
+
+from devicetree import edtlib
+
+# The set of binding types whose values can be iterated over with
+# DT_FOREACH_PROP_ELEM(). If you change this, make sure to update the
+# doxygen string for that macro.
+FOREACH_PROP_ELEM_TYPES = set(['string', 'array', 'uint8-array', 'string-array',
+                               'phandles', 'phandle-array'])
+
+class LogFormatter(logging.Formatter):
+    '''A log formatter that prints the level name in lower case,
+    for compatibility with earlier versions of edtlib.'''
+
+    def __init__(self):
+        super().__init__(fmt='%(levelnamelower)s: %(message)s')
+
+    def format(self, record):
+        record.levelnamelower = record.levelname.lower()
+        return super().format(record)
 
 def main():
     global header_file
@@ -34,12 +55,21 @@ def main():
 
     args = parse_args()
 
+    setup_edtlib_logging()
+
+    vendor_prefixes = {}
+    for prefixes_file in args.vendor_prefixes:
+        vendor_prefixes.update(edtlib.load_vendor_prefixes_txt(prefixes_file))
+
     try:
         edt = edtlib.EDT(args.dts, args.bindings_dirs,
                          # Suppress this warning if it's suppressed in dtc
                          warn_reg_unit_address_mismatch=
                              "-Wno-simple_bus_reg" not in args.dtc_flags,
-                         default_prop_types=True)
+                         default_prop_types=True,
+                         infer_binding_for_paths=["/zephyr,user"],
+                         werror=args.edtlib_Werror,
+                         vendor_prefixes=vendor_prefixes)
     except edtlib.EDTError as e:
         sys.exit(f"devicetree error: {e}")
 
@@ -80,12 +110,21 @@ def main():
         for node in sorted(edt.nodes, key=lambda node: node.dep_ordinal):
             write_node_comment(node)
 
+            out_comment("Node's full path:")
+            out_dt_define(f"{node.z_path_id}_PATH", f'"{escape(node.path)}"')
+
+            out_comment("Node's name with unit-address:")
+            out_dt_define(f"{node.z_path_id}_FULL_NAME",
+                          f'"{escape(node.name)}"')
+
             if node.parent is not None:
                 out_comment(f"Node parent ({node.parent.path}) identifier:")
                 out_dt_define(f"{node.z_path_id}_PARENT",
                               f"DT_{node.parent.z_path_id}")
 
             write_child_functions(node)
+            write_child_functions_status_okay(node)
+            write_dep_info(node)
             write_idents_and_existence(node)
             write_bus(node)
             write_special_props(node)
@@ -94,9 +133,47 @@ def main():
         write_chosen(edt)
         write_global_compat_info(edt)
 
+        write_device_extern_header(args.device_header_out, edt)
+
     if args.edt_pickle_out:
         write_pickled_edt(edt, args.edt_pickle_out)
 
+
+def write_device_extern_header(device_header_out, edt):
+    # Generate header that will extern devicetree struct device's
+
+    with open(device_header_out, "w", encoding="utf-8") as dev_header_file:
+        print("#ifndef DEVICE_EXTERN_GEN_H", file=dev_header_file)
+        print("#define DEVICE_EXTERN_GEN_H", file=dev_header_file)
+        print("", file=dev_header_file)
+        print("#ifdef __cplusplus", file=dev_header_file)
+        print('extern "C" {', file=dev_header_file)
+        print("#endif", file=dev_header_file)
+        print("", file=dev_header_file)
+
+        for node in sorted(edt.nodes, key=lambda node: node.dep_ordinal):
+            print(f"extern const struct device DEVICE_DT_NAME_GET(DT_{node.z_path_id}); /* dts_ord_{node.dep_ordinal} */",
+                  file=dev_header_file)
+
+        print("", file=dev_header_file)
+        print("#ifdef __cplusplus", file=dev_header_file)
+        print("}", file=dev_header_file)
+        print("#endif", file=dev_header_file)
+        print("", file=dev_header_file)
+        print("#endif /* DEVICE_EXTERN_GEN_H */", file=dev_header_file)
+
+
+def setup_edtlib_logging():
+    # The edtlib module emits logs using the standard 'logging' module.
+    # Configure it so that warnings and above are printed to stderr,
+    # using the LogFormatter class defined above to format each message.
+
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(LogFormatter())
+
+    logger = logging.getLogger('edtlib')
+    logger.setLevel(logging.WARNING)
+    logger.addHandler(handler)
 
 def node_z_path_id(node):
     # Return the node specific bit of the node's path identifier:
@@ -132,8 +209,17 @@ def parse_args():
     parser.add_argument("--dts-out", required=True,
                         help="path to write merged DTS source code to (e.g. "
                              "as a debugging aid)")
+    parser.add_argument("--device-header-out", required=True,
+                        help="path to write device struct extern header to")
     parser.add_argument("--edt-pickle-out",
                         help="path to write pickled edtlib.EDT object to")
+    parser.add_argument("--vendor-prefixes", action='append', default=[],
+                        help="vendor-prefixes.txt path; used for validation; "
+                             "may be given multiple times")
+    parser.add_argument("--edtlib-Werror", action="store_true",
+                        help="if set, edtlib-specific warnings become errors. "
+                             "(this does not apply to warnings shared "
+                             "with dtc.)")
 
     return parser.parse_args()
 
@@ -151,10 +237,10 @@ DTS input file:
 Directories with bindings:
   {", ".join(map(relativize, edt.bindings_dirs))}
 
-Nodes in dependency order (ordinal and path):
+Node dependency ordering (ordinal and path):
 """
 
-    for scc in edt.scc_order():
+    for scc in edt.scc_order:
         if len(scc) > 1:
             err("cycle in devicetree involving "
                 + ", ".join(node.path for node in scc))
@@ -174,33 +260,35 @@ def write_node_comment(node):
     s = f"""\
 Devicetree node: {node.path}
 
-Node's generated path identifier: DT_{node.z_path_id}
+Node identifier: DT_{node.z_path_id}
 """
 
     if node.matching_compat:
-        s += f"""
+        if node.binding_path:
+            s += f"""
 Binding (compatible = {node.matching_compat}):
   {relativize(node.binding_path)}
 """
-
-    s += f"\nDependency Ordinal: {node.dep_ordinal}\n"
-
-    if node.depends_on:
-        s += "\nRequires:\n"
-        for dep in node.depends_on:
-            s += f"  {dep.dep_ordinal:<3} {dep.path}\n"
-
-    if node.required_by:
-        s += "\nSupports:\n"
-        for req in node.required_by:
-            s += f"  {req.dep_ordinal:<3} {req.path}\n"
+        else:
+            s += f"""
+Binding (compatible = {node.matching_compat}):
+  No yaml (bindings inferred from properties)
+"""
 
     if node.description:
-        # Indent description by two spaces
-        s += "\nDescription:\n" + \
-            "\n".join("  " + line for line in
-                      node.description.splitlines()) + \
-            "\n"
+        # We used to put descriptions in the generated file, but
+        # devicetree bindings now have pages in the HTML
+        # documentation. Let users who are accustomed to digging
+        # around in the generated file where to find the descriptions
+        # now.
+        #
+        # Keeping them here would mean that the descriptions
+        # themselves couldn't contain C multi-line comments, which is
+        # inconvenient when we want to do things like quote snippets
+        # of .dtsi files within the descriptions, or otherwise
+        # include the string "*/".
+        s += ("\n(Descriptions have moved to the Devicetree Bindings Index\n"
+              "in the documentation.)\n")
 
     out_comment(s)
 
@@ -264,20 +352,17 @@ def write_special_props(node):
     # data cannot otherwise be obtained from write_vanilla_props()
     # results
 
-    global flash_area_num
-
-    out_comment("Special property macros:")
-
     # Macros that are special to the devicetree specification
+    out_comment("Macros for properties that are special in the specification:")
     write_regs(node)
     write_interrupts(node)
     write_compatibles(node)
     write_status(node)
 
-    if node.parent and "fixed-partitions" in node.parent.compats:
-        macro = f"{node.z_path_id}_PARTITION_ID"
-        out_dt_define(macro, flash_area_num)
-        flash_area_num += 1
+    # Macros that are special to bindings inherited from Linux, which
+    # we can't capture with the current bindings language.
+    write_pinctrls(node)
+    write_fixed_partitions(node)
 
 def write_regs(node):
     # reg property: edtlib knows the right #address-cells and
@@ -400,9 +485,71 @@ def write_child_functions(node):
             " ".join(f"fn(DT_{child.z_path_id})" for child in
                 node.children.values()))
 
+    out_dt_define(f"{node.z_path_id}_FOREACH_CHILD_VARGS(fn, ...)",
+            " ".join(f"fn(DT_{child.z_path_id}, __VA_ARGS__)" for child in
+                node.children.values()))
+
+def write_child_functions_status_okay(node):
+    # Writes macros that are helpers that will call a macro/function
+    # for each child node with status "okay".
+
+    functions = ''
+    functions_args = ''
+    for child in node.children.values():
+        if child.status == "okay":
+            functions = functions + f"fn(DT_{child.z_path_id}) "
+            functions_args = functions_args + f"fn(DT_{child.z_path_id}, " \
+                                                            "__VA_ARGS__) "
+
+    out_dt_define(f"{node.z_path_id}_FOREACH_CHILD_STATUS_OKAY(fn)", functions)
+    out_dt_define(f"{node.z_path_id}_FOREACH_CHILD_STATUS_OKAY_VARGS(fn, ...)",
+                                                                functions_args)
+
 
 def write_status(node):
     out_dt_define(f"{node.z_path_id}_STATUS_{str2ident(node.status)}", 1)
+
+
+def write_pinctrls(node):
+    # Write special macros for pinctrl-<index> and pinctrl-names properties.
+
+    out_comment("Pin control (pinctrl-<i>, pinctrl-names) properties:")
+
+    out_dt_define(f"{node.z_path_id}_PINCTRL_NUM", len(node.pinctrls))
+
+    if not node.pinctrls:
+        return
+
+    for pc_idx, pinctrl in enumerate(node.pinctrls):
+        out_dt_define(f"{node.z_path_id}_PINCTRL_IDX_{pc_idx}_EXISTS", 1)
+
+        if not pinctrl.name:
+            continue
+
+        name = pinctrl.name_as_token
+
+        # Below we rely on the fact that edtlib ensures the
+        # pinctrl-<pc_idx> properties are contiguous, start from 0,
+        # and contain only phandles.
+        out_dt_define(f"{node.z_path_id}_PINCTRL_IDX_{pc_idx}_TOKEN", name)
+        out_dt_define(f"{node.z_path_id}_PINCTRL_IDX_{pc_idx}_UPPER_TOKEN", name.upper())
+        out_dt_define(f"{node.z_path_id}_PINCTRL_NAME_{name}_EXISTS", 1)
+        out_dt_define(f"{node.z_path_id}_PINCTRL_NAME_{name}_IDX", pc_idx)
+        for idx, ph in enumerate(pinctrl.conf_nodes):
+            out_dt_define(f"{node.z_path_id}_PINCTRL_NAME_{name}_IDX_{idx}_PH",
+                          f"DT_{ph.z_path_id}")
+
+
+def write_fixed_partitions(node):
+    # Macros for child nodes of each fixed-partitions node.
+
+    if not (node.parent and "fixed-partitions" in node.parent.compats):
+        return
+
+    global flash_area_num
+    out_comment("fixed-partitions identifier:")
+    out_dt_define(f"{node.z_path_id}_PARTITION_ID", flash_area_num)
+    flash_area_num += 1
 
 
 def write_vanilla_props(node):
@@ -418,25 +565,54 @@ def write_vanilla_props(node):
 
     macro2val = {}
     for prop_name, prop in node.props.items():
-        macro = f"{node.z_path_id}_P_{str2ident(prop_name)}"
+        prop_id = str2ident(prop_name)
+        macro = f"{node.z_path_id}_P_{prop_id}"
         val = prop2value(prop)
         if val is not None:
             # DT_N_<node-id>_P_<prop-id>
             macro2val[macro] = val
 
+        if prop.spec.type == 'string':
+            macro2val[macro + "_STRING_TOKEN"] = prop.val_as_token
+            macro2val[macro + "_STRING_UPPER_TOKEN"] = prop.val_as_token.upper()
+
         if prop.enum_index is not None:
             # DT_N_<node-id>_P_<prop-id>_ENUM_IDX
             macro2val[macro + "_ENUM_IDX"] = prop.enum_index
+            spec = prop.spec
+
+            if spec.enum_tokenizable:
+                as_token = prop.val_as_token
+
+                # DT_N_<node-id>_P_<prop-id>_ENUM_TOKEN
+                macro2val[macro + "_ENUM_TOKEN"] = as_token
+
+                if spec.enum_upper_tokenizable:
+                    # DT_N_<node-id>_P_<prop-id>_ENUM_UPPER_TOKEN
+                    macro2val[macro + "_ENUM_UPPER_TOKEN"] = as_token.upper()
 
         if "phandle" in prop.type:
             macro2val.update(phandle_macros(prop, macro))
         elif "array" in prop.type:
             # DT_N_<node-id>_P_<prop-id>_IDX_<i>
+            # DT_N_<node-id>_P_<prop-id>_IDX_<i>_EXISTS
             for i, subval in enumerate(prop.val):
                 if isinstance(subval, str):
                     macro2val[macro + f"_IDX_{i}"] = quote_str(subval)
                 else:
                     macro2val[macro + f"_IDX_{i}"] = subval
+                macro2val[macro + f"_IDX_{i}_EXISTS"] = 1
+
+        if prop.type in FOREACH_PROP_ELEM_TYPES:
+            # DT_N_<node-id>_P_<prop-id>_FOREACH_PROP_ELEM
+            macro2val[f"{macro}_FOREACH_PROP_ELEM(fn)"] = \
+                ' \\\n\t'.join(f'fn(DT_{node.z_path_id}, {prop_id}, {i})'
+                              for i in range(len(prop.val)))
+
+            macro2val[f"{macro}_FOREACH_PROP_ELEM_VARGS(fn, ...)"] = \
+                ' \\\n\t'.join(f'fn(DT_{node.z_path_id}, {prop_id}, {i},'
+                                ' __VA_ARGS__)'
+                              for i in range(len(prop.val)))
 
         plen = prop_len(prop)
         if plen is not None:
@@ -451,6 +627,31 @@ def write_vanilla_props(node):
             out_dt_define(macro, val)
     else:
         out_comment("(No generic property macros)")
+
+
+def write_dep_info(node):
+    # Write dependency-related information about the node.
+
+    def fmt_dep_list(dep_list):
+        if dep_list:
+            # Sort the list by dependency ordinal for predictability.
+            sorted_list = sorted(dep_list, key=lambda node: node.dep_ordinal)
+            return "\\\n\t" + \
+                " \\\n\t".join(f"{n.dep_ordinal}, /* {n.path} */"
+                               for n in sorted_list)
+        else:
+            return "/* nothing */"
+
+    out_comment("Node's dependency ordinal:")
+    out_dt_define(f"{node.z_path_id}_ORD", node.dep_ordinal)
+
+    out_comment("Ordinals for what this node depends on directly:")
+    out_dt_define(f"{node.z_path_id}_REQUIRES_ORDS",
+                  fmt_dep_list(node.depends_on))
+
+    out_comment("Ordinals for what depends directly on this node:")
+    out_dt_define(f"{node.z_path_id}_SUPPORTS_ORDS",
+                  fmt_dep_list(node.required_by))
 
 
 def prop2value(prop):
@@ -520,12 +721,24 @@ def phandle_macros(prop, macro):
 
     if prop.type == "phandle":
         # A phandle is treated as a phandles with fixed length 1.
+        ret[f"{macro}"] = f"DT_{prop.val.z_path_id}"
+        ret[f"{macro}_IDX_0"] = f"DT_{prop.val.z_path_id}"
         ret[f"{macro}_IDX_0_PH"] = f"DT_{prop.val.z_path_id}"
+        ret[f"{macro}_IDX_0_EXISTS"] = 1
     elif prop.type == "phandles":
         for i, node in enumerate(prop.val):
+            ret[f"{macro}_IDX_{i}"] = f"DT_{node.z_path_id}"
             ret[f"{macro}_IDX_{i}_PH"] = f"DT_{node.z_path_id}"
+            ret[f"{macro}_IDX_{i}_EXISTS"] = 1
     elif prop.type == "phandle-array":
         for i, entry in enumerate(prop.val):
+            if entry is None:
+                # Unspecified element. The phandle-array at this index
+                # does not point at a ControllerAndData value, but
+                # subsequent indices in the array may.
+                ret[f"{macro}_IDX_{i}_EXISTS"] = 0
+                continue
+
             ret.update(controller_and_data_macros(entry, i, macro))
 
     return ret
@@ -541,6 +754,8 @@ def controller_and_data_macros(entry, i, macro):
     ret = {}
     data = entry.data
 
+    # DT_N_<node-id>_P_<prop-id>_IDX_<i>_EXISTS
+    ret[f"{macro}_IDX_{i}_EXISTS"] = 1
     # DT_N_<node-id>_P_<prop-id>_IDX_<i>_PH
     ret[f"{macro}_IDX_{i}_PH"] = f"DT_{entry.controller.z_path_id}"
     # DT_N_<node-id>_P_<prop-id>_IDX_<i>_VAL_<VAL>
@@ -598,8 +813,26 @@ def write_global_compat_info(edt):
 
         ident = str2ident(compat)
         n_okay_macros[f"DT_N_INST_{ident}_NUM_OKAY"] = len(okay_nodes)
+
+        # Helpers for non-INST for-each macros that take node
+        # identifiers as arguments.
+        for_each_macros[f"DT_FOREACH_OKAY_{ident}(fn)"] = \
+            " ".join(f"fn(DT_{node.z_path_id})"
+                     for node in okay_nodes)
+        for_each_macros[f"DT_FOREACH_OKAY_VARGS_{ident}(fn, ...)"] = \
+            " ".join(f"fn(DT_{node.z_path_id}, __VA_ARGS__)"
+                     for node in okay_nodes)
+
+        # Helpers for INST versions of for-each macros, which take
+        # instance numbers. We emit separate helpers for these because
+        # avoiding an intermediate node_id --> instance number
+        # conversion in the preprocessor helps to keep the macro
+        # expansions simpler. That hopefully eases debugging.
         for_each_macros[f"DT_FOREACH_OKAY_INST_{ident}(fn)"] = \
             " ".join(f"fn({edt.compat2nodes[compat].index(node)})"
+                     for node in okay_nodes)
+        for_each_macros[f"DT_FOREACH_OKAY_INST_VARGS_{ident}(fn, ...)"] = \
+            " ".join(f"fn({edt.compat2nodes[compat].index(node)}, __VA_ARGS__)"
                      for node in okay_nodes)
 
     for compat, nodes in edt.compat2nodes.items():

@@ -20,10 +20,10 @@
 struct mcr20a_context {
 	struct net_if *iface;
 	/**************************/
-	struct device *irq_gpio;
-	struct device *reset_gpio;
+	const struct device *irq_gpio;
+	const struct device *reset_gpio;
 	struct gpio_callback irqb_cb;
-	struct device *spi;
+	const struct device *spi;
 	struct spi_config spi_cfg;
 #if DT_INST_SPI_DEV_HAS_CS_GPIOS(0)
 	struct spi_cs_control cs_ctrl;
@@ -35,7 +35,7 @@ struct mcr20a_context {
 	struct k_sem seq_sync;
 	atomic_t seq_retval;
 	/************RX************/
-	K_THREAD_STACK_MEMBER(mcr20a_rx_stack,
+	K_KERNEL_STACK_MEMBER(mcr20a_rx_stack,
 			      CONFIG_IEEE802154_MCR20A_RX_STACK_SIZE);
 	struct k_thread mcr20a_rx_thread;
 };

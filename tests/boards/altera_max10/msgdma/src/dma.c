@@ -26,7 +26,8 @@ static char rx_data[DMA_BUFF_SIZE];
 static struct dma_config dma_cfg = {0};
 static struct dma_block_config dma_block_cfg = {0};
 
-static void dma_user_callback(void *arg, uint32_t id, int error_code)
+static void dma_user_callback(const struct device *dma_dev, void *arg,
+			      uint32_t id, int error_code)
 {
 	if (error_code == 0) {
 		TC_PRINT("DMA completed successfully\n");
@@ -39,12 +40,12 @@ static void dma_user_callback(void *arg, uint32_t id, int error_code)
 
 void test_msgdma(void)
 {
-	struct device *dma;
+	const struct device *dma;
 	static uint32_t chan_id;
 	int i;
 
-	dma = device_get_binding(CONFIG_DMA_0_NAME);
-	zassert_true(dma != NULL, "DMA_0 device not found!!");
+	dma = DEVICE_DT_GET(DT_NODELABEL(dma));
+	__ASSERT_NO_MSG(device_is_ready(dma));
 
 	/* Init tx buffer */
 	for (i = 0; i < DMA_BUFF_SIZE; i++) {

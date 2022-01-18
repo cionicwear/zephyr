@@ -3,14 +3,19 @@
 choice
 	prompt "SoC/CPU/Configuration Selection"
 
-source "$(SOC_DIR)/$(ARCH)/*/Kconfig.soc"
+# This loads custom SoC root Kconfig (only available if custom SoC root are defined)
+osource "$(KCONFIG_BINARY_DIR)/Kconfig.soc"
+# This loads Zephyr base SoC root Kconfig
+osource "soc/$(ARCH)/*/Kconfig.soc"
 
 endchoice
 
 menu "Hardware Configuration"
-osource "$(SOC_DIR)/$(ARCH)/Kconfig"
-osource "$(SOC_DIR)/$(ARCH)/*/Kconfig"
-
+# This loads custom SoC root Kconfig (only available if custom SoC root are defined)
+osource "$(KCONFIG_BINARY_DIR)/Kconfig.soc.arch"
+# This loads Zephyr base SoC Kconfigs
+osource "soc/$(ARCH)/Kconfig"
+osource "soc/$(ARCH)/*/Kconfig"
 
 module = SOC
 module-str = SOC
@@ -42,3 +47,9 @@ config SOC_DEPRECATED_RELEASE
 	  the Zephyr release that the SoC configuration will be removed.
 	  When set, any build for that SoC will generate a clearly visible
 	  deprecation warning.
+
+config SOC_HAS_TIMING_FUNCTIONS
+	bool
+	help
+	  Should be selected if SoC provides custom method for retrieving
+	  timestamps and cycle count.

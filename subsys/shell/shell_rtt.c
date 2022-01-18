@@ -52,6 +52,10 @@ static int init(const struct shell_transport *transport,
 
 static int uninit(const struct shell_transport *transport)
 {
+	struct shell_rtt *sh_rtt = (struct shell_rtt *)transport->ctx;
+
+	k_timer_stop(&sh_rtt->timer);
+
 	return 0;
 }
 
@@ -103,7 +107,7 @@ const struct shell_transport_api shell_rtt_transport_api = {
 	.read = read
 };
 
-static int enable_shell_rtt(struct device *arg)
+static int enable_shell_rtt(const struct device *arg)
 {
 	ARG_UNUSED(arg);
 	bool log_backend = CONFIG_SHELL_RTT_INIT_LOG_LEVEL > 0;

@@ -113,18 +113,18 @@ struct bmc150_magn_trim_regs {
 } __packed;
 
 struct bmc150_magn_data {
-	struct device *i2c_master;
+	const struct device *i2c_master;
 	struct k_sem sem;
 
 #if defined(CONFIG_BMC150_MAGN_TRIGGER)
-	K_THREAD_STACK_MEMBER(thread_stack,
+	K_KERNEL_STACK_MEMBER(thread_stack,
 			      CONFIG_BMC150_MAGN_TRIGGER_THREAD_STACK);
 	struct k_thread thread;
 #endif
 
 #if defined(CONFIG_BMC150_MAGN_TRIGGER_DRDY)
-	struct device *gpio_drdy;
-	struct device *dev;
+	const struct device *gpio_drdy;
+	const struct device *dev;
 	struct gpio_callback gpio_cb;
 	struct sensor_trigger trigger_drdy;
 	sensor_trigger_handler_t handler_drdy;
@@ -168,11 +168,11 @@ enum bmc150_magn_axis {
 };
 
 #if defined(CONFIG_BMC150_MAGN_TRIGGER)
-int bmc150_magn_trigger_set(struct device *dev,
+int bmc150_magn_trigger_set(const struct device *dev,
 			    const struct sensor_trigger *trig,
 			    sensor_trigger_handler_t handler);
 
-int bmc150_magn_init_interrupt(struct device *dev);
+int bmc150_magn_init_interrupt(const struct device *dev);
 #endif
 
 #endif /* ZEPHYR_DRIVERS_SENSOR_BMC150_MAGN_BMC150_MAGN_H_ */

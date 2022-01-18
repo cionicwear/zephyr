@@ -37,24 +37,21 @@ static uint8_t st7789v_ram_param[] = DT_INST_PROP(0, ram_param);
 static uint8_t st7789v_rgb_param[] = DT_INST_PROP(0, rgb_param);
 
 struct st7789v_data {
-	struct device *spi_dev;
+	const struct device *spi_dev;
 	struct spi_config spi_config;
 #if DT_INST_SPI_DEV_HAS_CS_GPIOS(0)
 	struct spi_cs_control cs_ctrl;
 #endif
 
 #if DT_INST_NODE_HAS_PROP(0, reset_gpios)
-	struct device *reset_gpio;
+	const struct device *reset_gpio;
 #endif
-	struct device *cmd_data_gpio;
+	const struct device *cmd_data_gpio;
 
 	uint16_t height;
 	uint16_t width;
 	uint16_t x_offset;
 	uint16_t y_offset;
-#ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-	uint32_t pm_state;
-#endif
 };
 
 #ifdef CONFIG_ST7789V_RGB565
@@ -115,7 +112,7 @@ static void st7789v_reset_display(struct st7789v_data *data)
 
 static int st7789v_blanking_on(const struct device *dev)
 {
-	struct st7789v_data *driver = (struct st7789v_data *)dev->driver_data;
+	struct st7789v_data *driver = (struct st7789v_data *)dev->data;
 
 	st7789v_transmit(driver, ST7789V_CMD_DISP_OFF, NULL, 0);
 	return 0;
@@ -123,7 +120,7 @@ static int st7789v_blanking_on(const struct device *dev)
 
 static int st7789v_blanking_off(const struct device *dev)
 {
-	struct st7789v_data *driver = (struct st7789v_data *)dev->driver_data;
+	struct st7789v_data *driver = (struct st7789v_data *)dev->data;
 
 	st7789v_transmit(driver, ST7789V_CMD_DISP_ON, NULL, 0);
 	return 0;
@@ -161,7 +158,7 @@ static int st7789v_write(const struct device *dev,
 			 const struct display_buffer_descriptor *desc,
 			 const void *buf)
 {
-	struct st7789v_data *data = (struct st7789v_data *)dev->driver_data;
+	struct st7789v_data *data = (struct st7789v_data *)dev->data;
 	const uint8_t *write_data_start = (uint8_t *) buf;
 	struct spi_buf tx_buf;
 	struct spi_buf_set tx_bufs;
@@ -223,7 +220,7 @@ static int st7789v_set_contrast(const struct device *dev,
 static void st7789v_get_capabilities(const struct device *dev,
 			      struct display_capabilities *capabilities)
 {
-	struct st7789v_data *data = (struct st7789v_data *)dev->driver_data;
+	struct st7789v_data *data = (struct st7789v_data *)dev->data;
 
 	memset(capabilities, 0, sizeof(struct display_capabilities));
 	capabilities->x_resolution = data->width;
@@ -334,9 +331,9 @@ static void st7789v_lcd_init(struct st7789v_data *p_st7789v)
 			 sizeof(st7789v_rgb_param));
 }
 
-static int st7789v_init(struct device *dev)
+static int st7789v_init(const struct device *dev)
 {
-	struct st7789v_data *data = (struct st7789v_data *)dev->driver_data;
+	struct st7789v_data *data = (struct st7789v_data *)dev->data;
 
 	data->spi_dev = device_get_binding(DT_INST_BUS_LABEL(0));
 	if (data->spi_dev == NULL) {
@@ -375,10 +372,6 @@ static int st7789v_init(struct device *dev)
 	}
 #endif
 
-#ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-	data->pm_state = DEVICE_PM_ACTIVE_STATE;
-#endif
-
 	data->cmd_data_gpio = device_get_binding(
 			DT_INST_GPIO_LABEL(0, cmd_data_gpios));
 	if (data->cmd_data_gpio == NULL) {
@@ -402,43 +395,28 @@ static int st7789v_init(struct device *dev)
 	return 0;
 }
 
-#ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-static void st7789v_enter_sleep(struct st7789v_data *data)
+#ifdef CONFIG_PM_DEVICE
+static int st7789v_pm_control(const struct device *dev,
+			      enum pm_device_action action)
 {
-	st7789v_transmit(data, ST7789V_CMD_SLEEP_IN, NULL, 0);
-}
-
-static int st7789v_pm_control(struct device *dev, uint32_t ctrl_command,
-				 void *context, device_pm_cb cb, void *arg)
-{
+	struct st7789v_data *data = (struct st7789v_data *)dev->data;
 	int ret = 0;
-	struct st7789v_data *data = (struct st7789v_data *)dev->driver_data;
 
-	switch (ctrl_command) {
-	case DEVICE_PM_SET_POWER_STATE:
-		if (*((uint32_t *)context) == DEVICE_PM_ACTIVE_STATE) {
-			st7789v_exit_sleep(data);
-			data->pm_state = DEVICE_PM_ACTIVE_STATE;
-			ret = 0;
-		} else {
-			st7789v_enter_sleep(data);
-			data->pm_state = DEVICE_PM_LOW_POWER_STATE;
-			ret = 0;
-		}
+	switch (action) {
+	case PM_DEVICE_ACTION_RESUME:
+		st7789v_exit_sleep(data);
 		break;
-	case DEVICE_PM_GET_POWER_STATE:
-		*((uint32_t *)context) = data->pm_state;
+	case PM_DEVICE_ACTION_SUSPEND:
+		st7789v_transmit(data, ST7789V_CMD_SLEEP_IN, NULL, 0);
 		break;
 	default:
-		ret = -EINVAL;
+		ret = -ENOTSUP;
+		break;
 	}
 
-	if (cb != NULL) {
-		cb(dev, ret, context, arg);
-	}
 	return ret;
 }
-#endif /* CONFIG_DEVICE_POWER_MANAGEMENT */
+#endif /* CONFIG_PM_DEVICE */
 
 static const struct display_driver_api st7789v_api = {
 	.blanking_on = st7789v_blanking_on,
@@ -460,12 +438,6 @@ static struct st7789v_data st7789v_data = {
 	.y_offset = DT_INST_PROP(0, y_offset),
 };
 
-#ifndef CONFIG_DEVICE_POWER_MANAGEMENT
-DEVICE_AND_API_INIT(st7789v, DT_INST_LABEL(0), &st7789v_init,
-		    &st7789v_data, NULL, APPLICATION,
-		    CONFIG_APPLICATION_INIT_PRIORITY, &st7789v_api);
-#else
-DEVICE_DEFINE(st7789v, DT_INST_LABEL(0), &st7789v_init,
-	      st7789v_pm_control, &st7789v_data, NULL, APPLICATION,
-	      CONFIG_APPLICATION_INIT_PRIORITY, &st7789v_api);
-#endif /* CONFIG_DEVICE_POWER_MANAGEMENT */
+DEVICE_DT_INST_DEFINE(0, &st7789v_init,
+	      st7789v_pm_control, &st7789v_data, NULL, POST_KERNEL,
+	      CONFIG_DISPLAY_INIT_PRIORITY, &st7789v_api);

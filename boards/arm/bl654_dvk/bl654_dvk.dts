@@ -115,7 +115,8 @@
 
 &spi0 {
 	compatible = "nordic,nrf-spi";
-	status = "okay";
+	/* Cannot be used together with i2c0. */
+	/* status = "okay"; */
 	sck-pin = <41>;
 	mosi-pin = <40>;
 	miso-pin = <4>;
@@ -142,10 +143,7 @@
 };
 
 &flash0 {
-	/*
-	 * For more information, see:
-	 * http://docs.zephyrproject.org/latest/guides/dts/index.html#flash-partitions
-	 */
+
 	partitions {
 		compatible = "fixed-partitions";
 		#address-cells = <1>;
@@ -184,7 +182,7 @@
 	};
 };
 
-&usbd {
+zephyr_udc0: &usbd {
 	compatible = "nordic,nrf-usbd";
 	status = "okay";
 };

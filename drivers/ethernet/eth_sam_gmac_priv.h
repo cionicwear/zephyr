@@ -261,28 +261,29 @@ struct gmac_queue {
 /* Device constant configuration parameters */
 struct eth_sam_dev_cfg {
 	Gmac *regs;
+#ifdef CONFIG_SOC_FAMILY_SAM
 	uint32_t periph_id;
 	const struct soc_gpio_pin *pin_list;
 	uint32_t pin_list_size;
+#endif
 	void (*config_func)(void);
-	struct phy_sam_gmac_dev phy;
+	const struct device *phy_dev;
 };
 
 /* Device run time data */
 struct eth_sam_dev_data {
 	struct net_if *iface;
 #if defined(CONFIG_PTP_CLOCK_SAM_GMAC)
-	struct device *ptp_clock;
+	const struct device *ptp_clock;
 #endif
 	uint8_t mac_addr[6];
-	struct k_delayed_work monitor_work;
 	bool link_up;
 	struct gmac_queue queue_list[GMAC_QUEUE_NUM];
 };
 
 #define DEV_CFG(dev) \
-	((const struct eth_sam_dev_cfg *const)(dev)->config_info)
+	((const struct eth_sam_dev_cfg *const)(dev)->config)
 #define DEV_DATA(dev) \
-	((struct eth_sam_dev_data *const)(dev)->driver_data)
+	((struct eth_sam_dev_data *const)(dev)->data)
 
 #endif /* ZEPHYR_DRIVERS_ETHERNET_ETH_SAM_GMAC_PRIV_H_ */

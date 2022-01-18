@@ -18,7 +18,7 @@ struct mcux_lptmr_config {
 	lptmr_timer_mode_t mode;
 	lptmr_pin_select_t pin;
 	lptmr_pin_polarity_t polarity;
-	void (*irq_config_func)(struct device *dev);
+	void (*irq_config_func)(const struct device *dev);
 };
 
 struct mcux_lptmr_data {
@@ -26,9 +26,9 @@ struct mcux_lptmr_data {
 	void *top_user_data;
 };
 
-static int mcux_lptmr_start(struct device *dev)
+static int mcux_lptmr_start(const struct device *dev)
 {
-	const struct mcux_lptmr_config *config = dev->config_info;
+	const struct mcux_lptmr_config *config = dev->config;
 
 	LPTMR_EnableInterrupts(config->base,
 			       kLPTMR_TimerInterruptEnable);
@@ -37,9 +37,9 @@ static int mcux_lptmr_start(struct device *dev)
 	return 0;
 }
 
-static int mcux_lptmr_stop(struct device *dev)
+static int mcux_lptmr_stop(const struct device *dev)
 {
-	const struct mcux_lptmr_config *config = dev->config_info;
+	const struct mcux_lptmr_config *config = dev->config;
 
 	LPTMR_DisableInterrupts(config->base,
 				kLPTMR_TimerInterruptEnable);
@@ -48,20 +48,20 @@ static int mcux_lptmr_stop(struct device *dev)
 	return 0;
 }
 
-static int mcux_lptmr_get_value(struct device *dev, uint32_t *ticks)
+static int mcux_lptmr_get_value(const struct device *dev, uint32_t *ticks)
 {
-	const struct mcux_lptmr_config *config = dev->config_info;
+	const struct mcux_lptmr_config *config = dev->config;
 
 	*ticks = LPTMR_GetCurrentTimerCount(config->base);
 
 	return 0;
 }
 
-static int mcux_lptmr_set_top_value(struct device *dev,
-				  const struct counter_top_cfg *cfg)
+static int mcux_lptmr_set_top_value(const struct device *dev,
+				    const struct counter_top_cfg *cfg)
 {
-	const struct mcux_lptmr_config *config = dev->config_info;
-	struct mcux_lptmr_data *data = dev->driver_data;
+	const struct mcux_lptmr_config *config = dev->config;
+	struct mcux_lptmr_data *data = dev->data;
 
 	if (cfg->ticks == 0) {
 		return -EINVAL;
@@ -85,9 +85,9 @@ static int mcux_lptmr_set_top_value(struct device *dev,
 	return 0;
 }
 
-static uint32_t mcux_lptmr_get_pending_int(struct device *dev)
+static uint32_t mcux_lptmr_get_pending_int(const struct device *dev)
 {
-	const struct mcux_lptmr_config *config = dev->config_info;
+	const struct mcux_lptmr_config *config = dev->config;
 	uint32_t mask = LPTMR_CSR_TCF_MASK | LPTMR_CSR_TIE_MASK;
 	uint32_t flags;
 
@@ -96,26 +96,17 @@ static uint32_t mcux_lptmr_get_pending_int(struct device *dev)
 	return ((flags & mask) == mask);
 }
 
-static uint32_t mcux_lptmr_get_top_value(struct device *dev)
+static uint32_t mcux_lptmr_get_top_value(const struct device *dev)
 {
-	const struct mcux_lptmr_config *config = dev->config_info;
+	const struct mcux_lptmr_config *config = dev->config;
 
 	return (config->base->CMR & LPTMR_CMR_COMPARE_MASK) + 1U;
 }
 
-static uint32_t mcux_lptmr_get_max_relative_alarm(struct device *dev)
+static void mcux_lptmr_isr(const struct device *dev)
 {
-	ARG_UNUSED(dev);
-
-	/* Alarms not supported */
-	return 0;
-}
-
-static void mcux_lptmr_isr(void *arg)
-{
-	struct device *dev = arg;
-	const struct mcux_lptmr_config *config = dev->config_info;
-	struct mcux_lptmr_data *data = dev->driver_data;
+	const struct mcux_lptmr_config *config = dev->config;
+	struct mcux_lptmr_data *data = dev->data;
 	uint32_t flags;
 
 	flags = LPTMR_GetStatusFlags(config->base);
@@ -126,9 +117,9 @@ static void mcux_lptmr_isr(void *arg)
 	}
 }
 
-static int mcux_lptmr_init(struct device *dev)
+static int mcux_lptmr_init(const struct device *dev)
 {
-	const struct mcux_lptmr_config *config = dev->config_info;
+	const struct mcux_lptmr_config *config = dev->config;
 	lptmr_config_t lptmr_config;
 
 	LPTMR_GetDefaultConfig(&lptmr_config);
@@ -157,7 +148,6 @@ static const struct counter_driver_api mcux_lptmr_driver_api = {
 	.set_top_value = mcux_lptmr_set_top_value,
 	.get_pending_int = mcux_lptmr_get_pending_int,
 	.get_top_value = mcux_lptmr_get_top_value,
-	.get_max_relative_alarm = mcux_lptmr_get_max_relative_alarm,
 };
 
 #define TO_LPTMR_CLK_SEL(val) _DO_CONCAT(kLPTMR_PrescalerClock_, val)
@@ -210,7 +200,7 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1,
 #if DT_NODE_HAS_STATUS(DT_DRV_INST(0), okay)
 static struct mcux_lptmr_data mcux_lptmr_data_0;
 
-static void mcux_lptmr_irq_config_0(struct device *dev);
+static void mcux_lptmr_irq_config_0(const struct device *dev);
 
 static struct mcux_lptmr_config mcux_lptmr_config_0 = {
 	.info = {
@@ -242,16 +232,16 @@ static struct mcux_lptmr_config mcux_lptmr_config_0 = {
 	.irq_config_func = mcux_lptmr_irq_config_0,
 };
 
-DEVICE_AND_API_INIT(mcux_lptmr_0, DT_INST_LABEL(0),
-		    &mcux_lptmr_init, &mcux_lptmr_data_0,
+DEVICE_DT_INST_DEFINE(0, &mcux_lptmr_init, NULL,
+		    &mcux_lptmr_data_0,
 		    &mcux_lptmr_config_0,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    &mcux_lptmr_driver_api);
 
-static void mcux_lptmr_irq_config_0(struct device *dev)
+static void mcux_lptmr_irq_config_0(const struct device *dev)
 {
 	IRQ_CONNECT(DT_INST_IRQN(0), DT_INST_IRQ(0, priority),
-		    mcux_lptmr_isr, DEVICE_GET(mcux_lptmr_0), 0);
+		    mcux_lptmr_isr, DEVICE_DT_INST_GET(0), 0);
 	irq_enable(DT_INST_IRQN(0));
 }
 #endif	/* DT_NODE_HAS_STATUS(DT_DRV_INST(0), okay) */

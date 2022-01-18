@@ -21,8 +21,9 @@
 #include <arch/cpu.h>
 #include <v2/irq.h>
 #include <swap_macros.h>
+#include <arch/arc/asm-compat/assembler.h>
 
-GTEXT(arch_switch)
+GTEXT(z_arc_switch)
 
 /**
  *
@@ -52,36 +53,25 @@ GTEXT(arch_switch)
  *
  */
 
-SECTION_FUNC(TEXT, arch_switch)
+SECTION_FUNC(TEXT, z_arc_switch)
 
-#ifdef CONFIG_EXECUTION_BENCHMARKING
-	push_s r0
-	push_s r1
-	push_s blink
-
-	bl read_timer_start_of_swap
-
-	pop_s blink
-	pop_s r1
-	pop_s r0
-#endif
 	/*
 	 * r0 = new_thread->switch_handle = switch_to thread,
 	 * r1 = &old_thread->switch_handle
 	 * get old_thread from r1
 	 */
 
-	sub r2, r1, ___thread_t_switch_handle_OFFSET
+	SUBR r2, r1, ___thread_t_switch_handle_OFFSET
 
-
-	st _CAUSE_COOP, [r2, _thread_offset_to_relinquish_cause]
+	/* _thread_arch.relinquish_cause is 32 bit despite of platform bittnes */
+	_st32_huge_offset _CAUSE_COOP, r2, _thread_offset_to_relinquish_cause, r3
 
 	/*
 	 * Save status32 and blink on the stack before the callee-saved registers.
 	 * This is the same layout as the start of an IRQ stack frame.
 	 */
-	lr r3, [_ARC_V2_STATUS32]
-	push_s r3
+	LRR r3, [_ARC_V2_STATUS32]
+	PUSHR r3
 
 #ifdef CONFIG_ARC_HAS_SECURE
 #ifdef CONFIG_ARC_SECURE_FIRMWARE
@@ -92,7 +82,7 @@ SECTION_FUNC(TEXT, arch_switch)
 	push_s r3
 #endif
 
-	push_s blink
+	PUSHR blink
 
 	_store_old_thread_callee_regs
 
@@ -101,7 +91,7 @@ SECTION_FUNC(TEXT, arch_switch)
  */
 	_disable_stack_checking r3
 
-	mov_s r2, r0
+	MOVR r2, r0
 
 	_load_new_thread_callee_regs
 
@@ -112,30 +102,30 @@ SECTION_FUNC(TEXT, arch_switch)
 
 	/* fall through to _switch_return_from_coop */
 
-.balign 4
+.align 4
 _switch_return_from_coop:
 
-	pop_s blink /* pc into blink */
+	POPR blink /* pc into blink */
 #ifdef CONFIG_ARC_HAS_SECURE
 	pop_s r3    /* pop SEC_STAT */
 #ifdef CONFIG_ARC_SECURE_FIRMWARE
 	sflag r3
 #endif
 #endif
-	pop_s r3    /* status32 into r3 */
+	POPR r3    /* status32 into r3 */
 	kflag r3    /* write status32 */
 
-#ifdef CONFIG_EXECUTION_BENCHMARKING
-	push_s blink
+#ifdef CONFIG_INSTRUMENT_THREAD_SWITCHING
+	PUSHR blink
 
-	bl read_timer_end_of_swap
+	bl z_thread_mark_switched_in
 
-	pop_s blink
-#endif /* CONFIG_EXECUTION_BENCHMARKING */
+	POPR blink
+#endif
 	j_s [blink]
 
 
-.balign 4
+.align 4
 _switch_return_from_rirq:
 _switch_return_from_firq:
 
@@ -146,11 +136,11 @@ _switch_return_from_firq:
 	 * thread
 	 */
 
-	lr r3, [_ARC_V2_AUX_IRQ_ACT]
+	LRR r3, [_ARC_V2_AUX_IRQ_ACT]
 #ifdef CONFIG_ARC_SECURE_FIRMWARE
 	or r3, r3, (1 << (ARC_N_IRQ_START_LEVEL - 1))
 #else
-	or r3, r3, (1 << (CONFIG_NUM_IRQ_PRIO_LEVELS - 1))
+	ORR r3, r3, (1 << (CONFIG_NUM_IRQ_PRIO_LEVELS - 1))
 #endif
 
 #ifdef CONFIG_ARC_NORMAL_FIRMWARE
@@ -159,6 +149,13 @@ _switch_return_from_firq:
 	mov_s r6, ARC_S_CALL_AUX_WRITE
 	sjli SJLI_CALL_ARC_SECURE
 #else
-	sr r3, [_ARC_V2_AUX_IRQ_ACT]
+	SRR r3, [_ARC_V2_AUX_IRQ_ACT]
+#endif
+#ifdef CONFIG_INSTRUMENT_THREAD_SWITCHING
+	PUSHR blink
+
+	bl z_thread_mark_switched_in
+
+	POPR blink
 #endif
 	rtie

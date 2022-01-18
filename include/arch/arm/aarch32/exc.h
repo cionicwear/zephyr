@@ -48,14 +48,10 @@
 #endif
 
 #define _EXC_FAULT_PRIO 0
-#ifdef CONFIG_ZERO_LATENCY_IRQS
 #define _EXC_ZERO_LATENCY_IRQS_PRIO 0
-#define _EXC_SVC_PRIO 1
-#define _IRQ_PRIO_OFFSET (_EXCEPTION_RESERVED_PRIO + 1)
-#else
-#define _EXC_SVC_PRIO 0
-#define _IRQ_PRIO_OFFSET (_EXCEPTION_RESERVED_PRIO)
-#endif
+#define _EXC_SVC_PRIO COND_CODE_1(CONFIG_ZERO_LATENCY_IRQS, (1), (0))
+#define _IRQ_PRIO_OFFSET (_EXCEPTION_RESERVED_PRIO + _EXC_SVC_PRIO)
+#define IRQ_PRIO_LOWEST (BIT(NUM_IRQ_PRIO_BITS) - (_IRQ_PRIO_OFFSET) - 1)
 
 #define _EXC_IRQ_DEFAULT_PRIO Z_EXC_PRIO(_IRQ_PRIO_OFFSET)
 
@@ -73,6 +69,20 @@ GTEXT(z_arm_exc_exit);
 extern "C" {
 #endif
 
+/* Additional register state that is not stacked by hardware on exception
+ * entry.
+ *
+ * These fields are ONLY valid in the ESF copy passed into z_arm_fatal_error().
+ * When information for a member is unavailable, the field is set to zero.
+ */
+#if defined(CONFIG_EXTRA_EXCEPTION_INFO)
+struct __extra_esf_info {
+	_callee_saved_t *callee;
+	uint32_t msp;
+	uint32_t exc_return;
+};
+#endif /* CONFIG_EXTRA_EXCEPTION_INFO */
+
 struct __esf {
 	struct __basic_sf {
 		sys_define_gpr_with_alias(a1, r0);
@@ -89,7 +99,12 @@ struct __esf {
 	uint32_t fpscr;
 	uint32_t undefined;
 #endif
+#if defined(CONFIG_EXTRA_EXCEPTION_INFO)
+	struct __extra_esf_info extra_info;
+#endif
 };
+
+extern uint32_t z_arm_coredump_fault_sp;
 
 typedef struct __esf z_arch_esf_t;
 

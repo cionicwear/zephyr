@@ -4,20 +4,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/*
- * @addtogroup test_dac_basic_operations
- * @{
- * @defgroup t_dac_basic_basic_operations test_dac_write
- * @brief TestPurpose: verify DAC driver handles single write
- * @}
- */
 
 #include <drivers/dac.h>
 #include <zephyr.h>
 #include <ztest.h>
 
 #if defined(CONFIG_BOARD_NUCLEO_L073RZ) || \
-	defined(CONFIG_BOARD_NUCLEO_L152RE)
+	defined(CONFIG_BOARD_NUCLEO_L152RE) || \
+	defined(CONFIG_BOARD_STM32F3_DISCO) || \
+	defined(CONFIG_BOARD_NUCLEO_F429ZI) || \
+	defined(CONFIG_BOARD_NUCLEO_F767ZI) || \
+	defined(CONFIG_BOARD_STM32L562E_DK) || \
+	defined(CONFIG_BOARD_NUCLEO_L552ZE_Q) || \
+	defined(CONFIG_BOARD_RONOTH_LODEV)
 
 #define DAC_DEVICE_NAME		DT_LABEL(DT_NODELABEL(dac1))
 #define DAC_CHANNEL_ID		1
@@ -35,6 +34,23 @@
 #define DAC_RESOLUTION		12
 #define DAC_CHANNEL_ID		0
 
+#elif defined(CONFIG_BOARD_FRDM_K22F)
+
+#define DAC_DEVICE_NAME		DT_LABEL(DT_NODELABEL(dac0))
+#define DAC_RESOLUTION		12
+#define DAC_CHANNEL_ID		0
+
+#elif defined(CONFIG_BOARD_BL652_DVK) || \
+	defined(CONFIG_BOARD_BL653_DVK) || \
+	defined(CONFIG_BOARD_BL654_DVK) || \
+	defined(CONFIG_BOARD_BL5340_DVK_CPUAPP)
+ /* Note external DAC MCP4725 is not populated on BL652_DVK, BL653_DVK and
+  * BL654_DVK at factory
+  */
+#define DAC_DEVICE_NAME		DT_LABEL(DT_NODELABEL(dac0))
+#define DAC_RESOLUTION		12
+#define DAC_CHANNEL_ID		0
+
 #else
 #error "Unsupported board."
 #endif
@@ -44,15 +60,15 @@ static const struct dac_channel_cfg dac_ch_cfg = {
 	.resolution  = DAC_RESOLUTION
 };
 
-struct device *get_dac_device(void)
+const struct device *get_dac_device(void)
 {
 	return device_get_binding(DAC_DEVICE_NAME);
 }
 
-static struct device *init_dac(void)
+static const struct device *init_dac(void)
 {
 	int ret;
-	struct device *dac_dev = device_get_binding(DAC_DEVICE_NAME);
+	const struct device *dac_dev = device_get_binding(DAC_DEVICE_NAME);
 
 	zassert_not_null(dac_dev, "Cannot get DAC device");
 
@@ -70,7 +86,7 @@ static int test_task_write_value(void)
 {
 	int ret;
 
-	struct device *dac_dev = init_dac();
+	const struct device *dac_dev = init_dac();
 
 	if (!dac_dev) {
 		return TC_FAIL;

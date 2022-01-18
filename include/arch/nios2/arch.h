@@ -21,7 +21,8 @@
 #include <arch/common/addr_types.h>
 #include <devicetree.h>
 #include <arch/nios2/nios2.h>
-#include <arch/common/sys_io.h>
+#include <arch/common/sys_bitops.h>
+#include <sys/sys_io.h>
 #include <arch/common/ffs.h>
 
 #define ARCH_STACK_PTR_ALIGN  4
@@ -43,7 +44,7 @@ extern "C" {
 	Z_ISR_DECLARE(irq_p, 0, isr_p, isr_param_p); \
 }
 
-extern void z_irq_spurious(void *unused);
+extern void z_irq_spurious(const void *unused);
 
 static ALWAYS_INLINE unsigned int arch_irq_lock(void)
 {
@@ -170,11 +171,11 @@ enum nios2_exception_cause {
 	 BIT(NIOS2_EXCEPTION_ECC_DATA_ERR))
 
 
-extern uint32_t z_timer_cycle_get_32(void);
+extern uint32_t sys_clock_cycle_get_32(void);
 
 static inline uint32_t arch_k_cycle_get_32(void)
 {
-	return z_timer_cycle_get_32();
+	return sys_clock_cycle_get_32();
 }
 
 static ALWAYS_INLINE void arch_nop(void)

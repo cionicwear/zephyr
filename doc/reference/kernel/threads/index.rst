@@ -3,6 +3,9 @@
 Threads
 #######
 
+.. note::
+   There is also limited support for using :ref:`nothread`.
+
 .. contents::
     :local:
     :depth: 2
@@ -13,8 +16,9 @@ independently executable threads of instructions.
 A :dfn:`thread` is a kernel object that is used for application processing
 that is too lengthy or too complex to be performed by an ISR.
 
-Any number of threads can be defined by an application. Each thread is
-referenced by a :dfn:`thread id` that is assigned when the thread is spawned.
+Any number of threads can be defined by an application (limited only by
+available RAM). Each thread is referenced by a :dfn:`thread id` that is assigned
+when the thread is spawned.
 
 A thread has the following key properties:
 
@@ -24,7 +28,7 @@ A thread has the following key properties:
   stack memory regions.
 
 * A **thread control block** for private kernel bookkeeping of the thread's
-  metadata. This is an instance of type :c:type:`k_thread`.
+  metadata. This is an instance of type :c:struct:`k_thread`.
 
 * An **entry point function**, which is invoked when the thread is started.
   Up to 3 **argument values** can be passed to this function.
@@ -43,7 +47,7 @@ A thread has the following key properties:
   By default, threads run in supervisor mode and allow access to
   privileged CPU instructions, the entire memory address space, and
   peripherals. User mode threads have a reduced set of privileges.
-  This depends on the :option:`CONFIG_USERSPACE` option. See :ref:`usermode_api`.
+  This depends on the :kconfig:`CONFIG_USERSPACE` option. See :ref:`usermode_api`.
 
 .. _lifecycle_v2:
 
@@ -81,15 +85,21 @@ A thread that terminates is responsible for releasing any shared resources
 it may own (such as mutexes and dynamically allocated memory)
 prior to returning, since the kernel does *not* reclaim them automatically.
 
-.. note::
-    The kernel does not currently make any claims regarding an application's
-    ability to respawn a thread that terminates.
-
 In some cases a thread may want to sleep until another thread terminates.
-This can be accomplished with the :cpp:func:`k_thread_join()` API. This
+This can be accomplished with the :c:func:`k_thread_join` API. This
 will block the calling thread until either the timeout expires, the target
 thread self-exits, or the target thread aborts (either due to a
-k_thread_abort() call or triggering a fatal error).
+:c:func:`k_thread_abort` call or triggering a fatal error).
+
+Once a thread has terminated, the kernel guarantees that no use will
+be made of the thread struct.  The memory of such a struct can then be
+re-used for any purpose, including spawning a new thread.  Note that
+the thread must be fully terminated, which presents race conditions
+where a thread's own logic signals completion which is seen by another
+thread before the kernel processing is complete.  Under normal
+circumstances, application code should use :c:func:`k_thread_join` or
+:c:func:`k_thread_abort` to synchronize on thread termination state
+and not rely on signaling from within application logic.
 
 Thread Aborting
 ===============
@@ -99,7 +109,7 @@ automatically aborts a thread if the thread triggers a fatal error condition,
 such as dereferencing a null pointer.
 
 A thread can also be aborted by another thread (or by itself)
-by calling :cpp:func:`k_thread_abort()`. However, it is typically preferable
+by calling :c:func:`k_thread_abort`. However, it is typically preferable
 to signal a thread to terminate itself gracefully, rather than aborting it.
 
 As with thread termination, the kernel does not reclaim shared resources
@@ -113,16 +123,16 @@ Thread Suspension
 ==================
 
 A thread can be prevented from executing for an indefinite period of time
-if it becomes **suspended**. The function :cpp:func:`k_thread_suspend()`
+if it becomes **suspended**. The function :c:func:`k_thread_suspend`
 can be used to suspend any thread, including the calling thread.
 Suspending a thread that is already suspended has no additional effect.
 
 Once suspended, a thread cannot be scheduled until another thread calls
-:cpp:func:`k_thread_resume()` to remove the suspension.
+:c:func:`k_thread_resume` to remove the suspension.
 
 .. note::
    A thread can prevent itself from executing for a specified period of time
-   using :cpp:func:`k_sleep()`. However, this is different from suspending
+   using :c:func:`k_sleep`. However, this is different from suspending
    a thread since a sleeping thread becomes executable automatically when the
    time limit is reached.
 
@@ -149,6 +159,62 @@ The following factors make a thread unready:
 
   .. image:: thread_states.svg
      :align: center
+
+
+Thread Stack objects
+********************
+
+Every thread requires its own stack buffer for the CPU to push context.
+Depending on configuration, there are several constraints that must be
+met:
+
+- There may need to be additional memory reserved for memory management
+  structures
+- If guard-based stack overflow detection is enabled, a small write-
+  protected memory management region must immediately precede the stack buffer
+  to catch overflows.
+- If userspace is enabled, a separate fixed-size privilege elevation stack must
+  be reserved to serve as a private kernel stack for handling system calls.
+- If userspace is enabled, the thread's stack buffer must be appropriately
+  sized and aligned such that a memory protection region may be programmed
+  to exactly fit.
+
+The alignment constraints can be quite restrictive, for example some MPUs
+require their regions to be of some power of two in size, and aligned to its
+own size.
+
+Because of this, portable code can't simply pass an arbitrary character buffer
+to :c:func:`k_thread_create`. Special macros exist to instantiate stacks,
+prefixed with ``K_KERNEL_STACK`` and ``K_THREAD_STACK``.
+
+Kernel-only Stacks
+==================
+
+If it is known that a thread will never run in user mode, or the stack is
+being used for special contexts like handling interrupts, it is best to
+define stacks using the ``K_KERNEL_STACK`` macros.
+
+These stacks save memory because an MPU region will never need to be
+programmed to cover the stack buffer itself, and the kernel will not need
+to reserve additional room for the privilege elevation stack, or memory
+management data structures which only pertain to user mode threads.
+
+Attempts from user mode to use stacks declared in this way will result in
+a fatal error for the caller.
+
+If ``CONFIG_USERSPACE`` is not enabled, the set of ``K_THREAD_STACK`` macros
+have an identical effect to the ``K_KERNEL_STACK`` macros.
+
+Thread stacks
+=============
+
+If it is known that a stack will need to host user threads, or if this
+cannot be determined, define the stack with ``K_THREAD_STACK`` macros.
+This may use more memory but the stack object is suitable for hosting
+user threads.
+
+If ``CONFIG_USERSPACE`` is not enabled, the set of ``K_THREAD_STACK`` macros
+have an identical effect to the ``K_KERNEL_STACK`` macros.
 
 .. _thread_priorities:
 
@@ -179,14 +245,18 @@ A thread's initial priority value can be altered up or down after the thread
 has been started. Thus it is possible for a preemptible thread to become
 a cooperative thread, and vice versa, by changing its priority.
 
+.. note::
+    The scheduler does not make heuristic decisions to re-prioritize threads.
+    Thread priorities are set and changed only at the application's request.
+
 The kernel supports a virtually unlimited number of thread priority levels.
-The configuration options :option:`CONFIG_NUM_COOP_PRIORITIES` and
-:option:`CONFIG_NUM_PREEMPT_PRIORITIES` specify the number of priority
+The configuration options :kconfig:`CONFIG_NUM_COOP_PRIORITIES` and
+:kconfig:`CONFIG_NUM_PREEMPT_PRIORITIES` specify the number of priority
 levels for each class of thread, resulting in the following usable priority
 ranges:
 
-* cooperative threads: (-:option:`CONFIG_NUM_COOP_PRIORITIES`) to -1
-* preemptive threads: 0 to (:option:`CONFIG_NUM_PREEMPT_PRIORITIES` - 1)
+* cooperative threads: (-:kconfig:`CONFIG_NUM_COOP_PRIORITIES`) to -1
+* preemptive threads: 0 to (:kconfig:`CONFIG_NUM_PREEMPT_PRIORITIES` - 1)
 
 .. image:: priorities.svg
    :align: center
@@ -194,6 +264,39 @@ ranges:
 For example, configuring 5 cooperative priorities and 10 preemptive priorities
 results in the ranges -5 to -1 and 0 to 9, respectively.
 
+.. _metairq_priorities:
+
+Meta-IRQ Priorities
+===================
+
+When enabled (see :kconfig:`CONFIG_NUM_METAIRQ_PRIORITIES`), there is a special
+subclass of cooperative priorities at the highest (numerically lowest)
+end of the priority space: meta-IRQ threads.  These are scheduled
+according to their normal priority, but also have the special ability
+to preempt all other threads (and other meta-IRQ threads) at lower
+priorities, even if those threads are cooperative and/or have taken a
+scheduler lock. Meta-IRQ threads are still threads, however,
+and can still be interrupted by any hardware interrupt.
+
+This behavior makes the act of unblocking a meta-IRQ thread (by any
+means, e.g. creating it, calling k_sem_give(), etc.) into the
+equivalent of a synchronous system call when done by a lower
+priority thread, or an ARM-like "pended IRQ" when done from true
+interrupt context.  The intent is that this feature will be used to
+implement interrupt "bottom half" processing and/or "tasklet" features
+in driver subsystems.  The thread, once woken, will be guaranteed to
+run before the current CPU returns into application code.
+
+Unlike similar features in other OSes, meta-IRQ threads are true
+threads and run on their own stack (which must be allocated normally),
+not the per-CPU interrupt stack. Design work to enable the use of the
+IRQ stack on supported architectures is pending.
+
+Note that because this breaks the promise made to cooperative
+threads by the Zephyr API (namely that the OS won't schedule other
+thread until the current thread deliberately blocks), it should be
+used only with great care from application code.  These are not simply
+very high priority threads and should not be used as such.
 
 .. _thread_options_v2:
 
@@ -235,12 +338,12 @@ The following thread options are supported.
     of this register when scheduling the thread.
 
 :c:macro:`K_USER`
-    If :option:`CONFIG_USERSPACE` is enabled, this thread will be created in
+    If :kconfig:`CONFIG_USERSPACE` is enabled, this thread will be created in
     user mode and will have reduced privileges. See :ref:`usermode_api`. Otherwise
     this flag does nothing.
 
 :c:macro:`K_INHERIT_PERMS`
-    If :option:`CONFIG_USERSPACE` is enabled, this thread will inherit all
+    If :kconfig:`CONFIG_USERSPACE` is enabled, this thread will inherit all
     kernel object permissions that the parent thread had, except the parent
     thread object.  See :ref:`usermode_api`.
 
@@ -259,10 +362,10 @@ it chooses. The default custom data value for a thread is zero.
    within a single shared kernel interrupt handling context.
 
 By default, thread custom data support is disabled. The configuration option
-:option:`CONFIG_THREAD_CUSTOM_DATA` can be used to enable support.
+:kconfig:`CONFIG_THREAD_CUSTOM_DATA` can be used to enable support.
 
-The :cpp:func:`k_thread_custom_data_set()` and
-:cpp:func:`k_thread_custom_data_get()` functions are used to write and read
+The :c:func:`k_thread_custom_data_set` and
+:c:func:`k_thread_custom_data_get` functions are used to write and read
 a thread's custom data, respectively. A thread can only access its own
 custom data, and not that of another thread.
 
@@ -301,9 +404,22 @@ Spawning a Thread
 =================
 
 A thread is spawned by defining its stack area and its thread control block,
-and then calling :cpp:func:`k_thread_create()`. The stack area must be defined
-using :c:macro:`K_THREAD_STACK_DEFINE` to ensure it is properly set up in
-memory.
+and then calling :c:func:`k_thread_create`.
+
+The stack area must be defined using :c:macro:`K_THREAD_STACK_DEFINE` or
+:c:macro:`K_KERNEL_STACK_DEFINE` to ensure it is properly set up in memory.
+
+The size parameter for the stack must be one of three values:
+
+- The original requested stack size passed to
+  ``K_THREAD_STACK`` or ``K_KERNEL_STACK`` family of stack instantiation
+  macros.
+- For a stack object defined with the ``K_THREAD_STACK`` family of
+  macros, the return value of :c:macro:`K_THREAD_STACK_SIZEOF()` for that'
+  object.
+- For a stack object defined with the ``K_KERNEL_STACK`` family of
+  macros, the return value of :c:macro:`K_KERNEL_STACK_SIZEOF()` for that
+  object.
 
 The thread spawning function returns its thread id, which can be used
 to reference the thread.
@@ -344,7 +460,7 @@ The following code has the same effect as the code segment above.
                     MY_PRIORITY, 0, 0);
 
 .. note::
-   The delay parameter to :cpp:func:`k_thread_create()` is a
+   The delay parameter to :c:func:`k_thread_create` is a
    :c:type:`k_timeout_t` value, so :c:macro:`K_NO_WAIT` means to start the
    thread immediately. The corresponding parameter to :c:macro:`K_THREAD_DEFINE`
    is a duration in integral milliseconds, so the equivalent argument is 0.
@@ -352,8 +468,8 @@ The following code has the same effect as the code segment above.
 User Mode Constraints
 ---------------------
 
-This section only applies if :option:`CONFIG_USERSPACE` is enabled, and a user
-thread tries to create a new thread. The :c:func:`k_thread_create()` API is
+This section only applies if :kconfig:`CONFIG_USERSPACE` is enabled, and a user
+thread tries to create a new thread. The :c:func:`k_thread_create` API is
 still used, but there are additional constraints which must be met or the
 calling thread will be terminated:
 
@@ -378,9 +494,9 @@ calling thread will be terminated:
 Dropping Permissions
 ====================
 
-If :option:`CONFIG_USERSPACE` is enabled, a thread running in supervisor mode
+If :kconfig:`CONFIG_USERSPACE` is enabled, a thread running in supervisor mode
 may perform a one-way transition to user mode using the
-:cpp:func:`k_thread_user_mode_enter()` API. This is a one-way operation which
+:c:func:`k_thread_user_mode_enter` API. This is a one-way operation which
 will reset and zero the thread's stack memory. The thread will be marked
 as non-essential.
 
@@ -406,8 +522,30 @@ The following code illustrates the ways a thread can terminate.
         /* thread terminates at end of entry point function */
     }
 
-If CONFIG_USERSPACE is enabled, aborting a thread will additionally mark the
-thread and stack objects as uninitialized so that they may be re-used.
+If :kconfig:`CONFIG_USERSPACE` is enabled, aborting a thread will additionally
+mark the thread and stack objects as uninitialized so that they may be re-used.
+
+Runtime Statistics
+******************
+
+Thread runtime statistics can be gathered and retrieved if
+:kconfig:`CONFIG_THREAD_RUNTIME_STATS` is enabled, for example, total number of
+execution cycles of a thread.
+
+By default, the runtime statistics are gathered using the default kernel
+timer. For some architectures, SoCs or boards, there are timers with higher
+resolution available via timing functions. Using of these timers can be
+enabled via :kconfig:`CONFIG_THREAD_RUNTIME_STATS_USE_TIMING_FUNCTIONS`.
+
+Here is an example:
+
+.. code-block:: c
+
+   k_thread_runtime_stats_t rt_stats_thread;
+
+   k_thread_runtime_stats_get(k_current_get(), &rt_stats_thread);
+
+   printk("Cycles: %llu\n", rt_stats_thread.execution_cycles);
 
 Suggested Uses
 **************
@@ -423,16 +561,16 @@ Configuration Options
 
 Related configuration options:
 
-* :option:`CONFIG_MAIN_THREAD_PRIORITY`
-* :option:`CONFIG_MAIN_STACK_SIZE`
-* :option:`CONFIG_IDLE_STACK_SIZE`
-* :option:`CONFIG_THREAD_CUSTOM_DATA`
-* :option:`CONFIG_NUM_COOP_PRIORITIES`
-* :option:`CONFIG_NUM_PREEMPT_PRIORITIES`
-* :option:`CONFIG_TIMESLICING`
-* :option:`CONFIG_TIMESLICE_SIZE`
-* :option:`CONFIG_TIMESLICE_PRIORITY`
-* :option:`CONFIG_USERSPACE`
+* :kconfig:`CONFIG_MAIN_THREAD_PRIORITY`
+* :kconfig:`CONFIG_MAIN_STACK_SIZE`
+* :kconfig:`CONFIG_IDLE_STACK_SIZE`
+* :kconfig:`CONFIG_THREAD_CUSTOM_DATA`
+* :kconfig:`CONFIG_NUM_COOP_PRIORITIES`
+* :kconfig:`CONFIG_NUM_PREEMPT_PRIORITIES`
+* :kconfig:`CONFIG_TIMESLICING`
+* :kconfig:`CONFIG_TIMESLICE_SIZE`
+* :kconfig:`CONFIG_TIMESLICE_PRIORITY`
+* :kconfig:`CONFIG_USERSPACE`
 
 
 
@@ -440,4 +578,5 @@ API Reference
 **************
 
 .. doxygengroup:: thread_apis
-   :project: Zephyr
+
+.. doxygengroup:: thread_stack_api

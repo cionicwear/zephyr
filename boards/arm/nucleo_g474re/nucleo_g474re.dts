@@ -6,17 +6,19 @@
 
 /dts-v1/;
 #include <st/g4/stm32g474Xe.dtsi>
+#include <st/g4/stm32g474r(b-c-e)tx-pinctrl.dtsi>
 #include "arduino_r3_connector.dtsi"
 
 / {
 	model = "STMicroelectronics STM32G474RE-NUCLEO board";
-	compatible = "st,stm32g474re-nucleo", "st,stm32g474";
+	compatible = "st,stm32g474re-nucleo";
 
 	chosen {
 		zephyr,console = &lpuart1;
 		zephyr,shell-uart = &lpuart1;
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
+		zephyr,can-primary = &can1;
 	};
 
 	leds {
@@ -50,21 +52,62 @@
 	};
 };
 
+&clk_hse {
+	clock-frequency = <DT_FREQ_M(24)>;
+	status = "okay";
+};
+
+&pll {
+	div-m = <6>;
+	mul-n = <85>;
+	div-p = <7>;
+	div-q = <2>;
+	div-r = <2>;
+	clocks = <&clk_hse>;
+	status = "okay";
+};
+
+&rcc {
+	clocks = <&pll>;
+	clock-frequency = <DT_FREQ_M(170)>;
+	ahb-prescaler = <1>;
+	apb1-prescaler = <1>;
+	apb2-prescaler = <1>;
+};
+
 &usart1 {
+	pinctrl-0 = <&usart1_tx_pc4 &usart1_rx_pc5>;
 	current-speed = <115200>;
 	status = "okay";
 };
 
 &lpuart1 {
+	pinctrl-0 = <&lpuart1_tx_pa2 &lpuart1_rx_pa3>;
 	current-speed = <115200>;
 	status = "okay";
 };
 
 &i2c1 {
+	pinctrl-0 = <&i2c1_scl_pb8 &i2c1_sda_pb9>;
 	status = "okay";
 };
 
 &spi1 {
+	pinctrl-0 = <&spi1_sck_pa5 &spi1_miso_pa6 &spi1_mosi_pa7>;
+	cs-gpios = <&gpiob 6 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+	status = "okay";
+};
+
+&spi2 {
+	pinctrl-0 = <&spi2_nss_pb12 &spi2_sck_pb13
+		     &spi2_miso_pb14 &spi2_mosi_pb15>;
+	status = "okay";
+};
+
+&spi3 {
+	/* SPI3 on the ST Morpho Connector CN7 pins 17, 1, 2, 3*/
+	pinctrl-0 = <&spi3_nss_pa15 &spi3_sck_pc10
+		     &spi3_miso_pc11 &spi3_mosi_pc12>;
 	status = "okay";
 };
 
@@ -73,11 +116,17 @@
 
 	pwm2: pwm {
 		status = "okay";
+		pinctrl-0 = <&tim2_ch3_pb10>;
 	};
 };
 
-&usb {
+&timers3 {
 	status = "okay";
+	pwm3: pwm {
+		status = "okay";
+		st,prescaler = <10000>;
+		pinctrl-0 = <&tim3_ch1_pb4>;
+	};
 };
 
 &rtc {
@@ -103,5 +152,25 @@
 };
 
 &iwdg {
+	status = "okay";
+};
+
+&rng {
+	status = "okay";
+};
+
+&adc1 {
+	pinctrl-0 = <&adc1_in1_pa0>;
+	status = "okay";
+};
+
+&can1 {
+	pinctrl-0 = <&fdcan1_rx_pa11 &fdcan1_tx_pa12>;
+	bus-speed = <125000>;
+	sjw = <1>;
+	sample-point = <875>;
+	bus-speed-data = <1000000>;
+	sjw-data = <1>;
+	sample-point-data = <875>;
 	status = "okay";
 };

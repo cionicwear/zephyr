@@ -25,7 +25,7 @@ LOG_MODULE_REGISTER(temp_kinetis, CONFIG_SENSOR_LOG_LEVEL);
 #define TEMP_KINETIS_ADC_SAMPLES 2
 
 struct temp_kinetis_config {
-	const char *adc_dev_name;
+	const struct device *adc;
 	uint8_t sensor_adc_ch;
 	uint8_t bandgap_adc_ch;
 	int bandgap_mv;
@@ -36,15 +36,14 @@ struct temp_kinetis_config {
 };
 
 struct temp_kinetis_data {
-	struct device *adc;
 	uint16_t buffer[TEMP_KINETIS_ADC_SAMPLES];
 };
 
-static int temp_kinetis_sample_fetch(struct device *dev,
+static int temp_kinetis_sample_fetch(const struct device *dev,
 				     enum sensor_channel chan)
 {
-	const struct temp_kinetis_config *config = dev->config_info;
-	struct temp_kinetis_data *data = dev->driver_data;
+	const struct temp_kinetis_config *config = dev->config;
+	struct temp_kinetis_data *data = dev->data;
 #ifdef CONFIG_TEMP_KINETIS_FILTER
 	uint16_t previous[TEMP_KINETIS_ADC_SAMPLES];
 	int i;
@@ -61,7 +60,7 @@ static int temp_kinetis_sample_fetch(struct device *dev,
 	memcpy(previous, data->buffer, sizeof(previous));
 #endif /* CONFIG_TEMP_KINETIS_FILTER */
 
-	err = adc_read(data->adc, &config->adc_seq);
+	err = adc_read(config->adc, &config->adc_seq);
 	if (err) {
 		LOG_ERR("failed to read ADC channels (err %d)", err);
 		return err;
@@ -84,12 +83,12 @@ static int temp_kinetis_sample_fetch(struct device *dev,
 	return 0;
 }
 
-static int temp_kinetis_channel_get(struct device *dev,
+static int temp_kinetis_channel_get(const struct device *dev,
 				    enum sensor_channel chan,
 				    struct sensor_value *val)
 {
-	const struct temp_kinetis_config *config = dev->config_info;
-	struct temp_kinetis_data *data = dev->driver_data;
+	const struct temp_kinetis_config *config = dev->config;
+	struct temp_kinetis_data *data = dev->data;
 	uint16_t adcr_vdd = BIT_MASK(config->adc_seq.resolution);
 	uint16_t adcr_temp25;
 	int32_t temp_cc;
@@ -137,10 +136,10 @@ static const struct sensor_driver_api temp_kinetis_driver_api = {
 	.channel_get = temp_kinetis_channel_get,
 };
 
-static int temp_kinetis_init(struct device *dev)
+static int temp_kinetis_init(const struct device *dev)
 {
-	const struct temp_kinetis_config *config = dev->config_info;
-	struct temp_kinetis_data *data = dev->driver_data;
+	const struct temp_kinetis_config *config = dev->config;
+	struct temp_kinetis_data *data = dev->data;
 	int err;
 	int i;
 	const struct adc_channel_cfg ch_cfg[] = {
@@ -162,14 +161,13 @@ static int temp_kinetis_init(struct device *dev)
 
 	memset(&data->buffer, 0, ARRAY_SIZE(data->buffer));
 
-	data->adc = device_get_binding(config->adc_dev_name);
-	if (!data->adc) {
-		LOG_ERR("could not get ADC device");
+	if (!device_is_ready(config->adc)) {
+		LOG_ERR("ADC device is not ready");
 		return -EINVAL;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(ch_cfg); i++) {
-		err = adc_channel_setup(data->adc, &ch_cfg[i]);
+		err = adc_channel_setup(config->adc, &ch_cfg[i]);
 		if (err) {
 			LOG_ERR("failed to configure ADC channel (err %d)",
 				err);
@@ -192,8 +190,7 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1,
 	static struct temp_kinetis_data temp_kinetis_data_0;		\
 									\
 	static const struct temp_kinetis_config temp_kinetis_config_0 = {\
-		.adc_dev_name =						\
-			DT_INST_IO_CHANNELS_LABEL_BY_IDX(inst, 0),	\
+		.adc = DEVICE_DT_GET(DT_INST_IO_CHANNELS_CTLR(inst)),\
 		.sensor_adc_ch =					\
 			DT_INST_IO_CHANNELS_INPUT_BY_NAME(inst, sensor),\
 		.bandgap_adc_ch =					\
@@ -215,8 +212,9 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1,
 		},							\
 	};								\
 									\
-	DEVICE_AND_API_INIT(temp_kinetis, DT_INST_LABEL(inst),		\
-			    temp_kinetis_init, &temp_kinetis_data_0,	\
+	DEVICE_DT_INST_DEFINE(inst, temp_kinetis_init,			\
+			    NULL,					\
+			    &temp_kinetis_data_0,			\
 			    &temp_kinetis_config_0, POST_KERNEL,	\
 			    CONFIG_SENSOR_INIT_PRIORITY,		\
 			    &temp_kinetis_driver_api);
