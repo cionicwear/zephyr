@@ -7,4 +7,5 @@ Testing
    :maxdepth: 1
 
    ztest
-   sanitycheck
+   twister
+   coverage

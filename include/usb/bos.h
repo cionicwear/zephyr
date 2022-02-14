@@ -13,9 +13,13 @@
 #define USB_DEVICE_BOS_DESC_DEFINE_CAP \
 	static __in_section(usb, bos_desc_area, 1) __aligned(1) __used
 
-/* BOS descriptor type */
-#define DESCRIPTOR_TYPE_BOS		0x0F
+/*
+ * DESCRIPTOR_TYPE_BOS macro is deprecated in 2.7 release.
+ * Please replace with macros from Chapter 9 header, include/usb/usb_ch9.h
+ */
+#define DESCRIPTOR_TYPE_BOS		__DEPRECATED_MACRO 0x0F
 
+#define USB_BOS_CAPABILITY_EXTENSION	0x02
 #define USB_BOS_CAPABILITY_PLATFORM	0x05
 
 /* BOS Capability Descriptor */
@@ -48,6 +52,13 @@ struct usb_bos_capability_msos {
 	uint16_t wMSOSDescriptorSetTotalLength;
 	uint8_t bMS_VendorCode;
 	uint8_t bAltEnumCode;
+} __packed;
+
+struct usb_bos_capability_lpm {
+	uint8_t bLength;
+	uint8_t bDescriptorType;
+	uint8_t bDevCapabilityType;
+	uint32_t bmAttributes;
 } __packed;
 
 size_t usb_bos_get_length(void);

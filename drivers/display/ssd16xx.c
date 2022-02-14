@@ -25,16 +25,9 @@ LOG_MODULE_REGISTER(ssd16xx);
  * SSD1673, SSD1608, SSD1681, ILI3897 compatible EPD controller driver.
  */
 
-#define SSD16XX_SPI_FREQ DT_INST_PROP(0, spi_max_frequency)
-#define SSD16XX_BUS_NAME DT_INST_BUS_LABEL(0)
 #define SSD16XX_DC_PIN DT_INST_GPIO_PIN(0, dc_gpios)
 #define SSD16XX_DC_FLAGS DT_INST_GPIO_FLAGS(0, dc_gpios)
 #define SSD16XX_DC_CNTRL DT_INST_GPIO_LABEL(0, dc_gpios)
-#define SSD16XX_CS_PIN DT_INST_SPI_DEV_CS_GPIOS_PIN(0)
-#define SSD16XX_CS_FLAGS DT_INST_SPI_DEV_CS_GPIOS_FLAGS(0)
-#if DT_INST_SPI_DEV_HAS_CS_GPIOS(0)
-#define SSD16XX_CS_CNTRL DT_INST_SPI_DEV_CS_GPIOS_LABEL(0)
-#endif
 #define SSD16XX_BUSY_PIN DT_INST_GPIO_PIN(0, busy_gpios)
 #define SSD16XX_BUSY_CNTRL DT_INST_GPIO_LABEL(0, busy_gpios)
 #define SSD16XX_BUSY_FLAGS DT_INST_GPIO_FLAGS(0, busy_gpios)
@@ -59,16 +52,16 @@ LOG_MODULE_REGISTER(ssd16xx);
 #define SSD16XX_TR_SCALE_FACTOR		256U
 
 struct ssd16xx_data {
-	struct device *reset;
-	struct device *dc;
-	struct device *busy;
-	struct device *spi_dev;
-	struct spi_config spi_config;
-#if defined(SSD16XX_CS_CNTRL)
-	struct spi_cs_control cs_ctrl;
-#endif
+	const struct device *reset;
+	const struct device *dc;
+	const struct device *busy;
+	const struct ssd16xx_config *config;
 	uint8_t scan_mode;
 	uint8_t update_cmd;
+};
+
+struct ssd16xx_config {
+	struct spi_dt_spec bus;
 };
 
 #if DT_INST_NODE_HAS_PROP(0, lut_initial)
@@ -91,7 +84,7 @@ static inline int ssd16xx_write_cmd(struct ssd16xx_data *driver,
 	struct spi_buf_set buf_set = {.buffers = &buf, .count = 1};
 
 	gpio_pin_set(driver->dc, SSD16XX_DC_PIN, 1);
-	err = spi_write(driver->spi_dev, &driver->spi_config, &buf_set);
+	err = spi_write_dt(&driver->config->bus, &buf_set);
 	if (err < 0) {
 		return err;
 	}
@@ -100,7 +93,7 @@ static inline int ssd16xx_write_cmd(struct ssd16xx_data *driver,
 		buf.buf = data;
 		buf.len = len;
 		gpio_pin_set(driver->dc, SSD16XX_DC_PIN, 0);
-		err = spi_write(driver->spi_dev, &driver->spi_config, &buf_set);
+		err = spi_write_dt(&driver->config->bus, &buf_set);
 		if (err < 0) {
 			return err;
 		}
@@ -210,7 +203,7 @@ static int ssd16xx_blanking_on(const struct device *dev)
 
 static int ssd16xx_update_display(const struct device *dev)
 {
-	struct ssd16xx_data *driver = dev->driver_data;
+	struct ssd16xx_data *driver = dev->data;
 	int err;
 
 	err = ssd16xx_write_cmd(driver, SSD16XX_CMD_UPDATE_CTRL2,
@@ -228,7 +221,7 @@ static int ssd16xx_write(const struct device *dev, const uint16_t x,
 			 const struct display_buffer_descriptor *desc,
 			 const void *buf)
 {
-	struct ssd16xx_data *driver = dev->driver_data;
+	struct ssd16xx_data *driver = dev->data;
 	int err;
 	size_t buf_len;
 	uint16_t x_start;
@@ -384,10 +377,10 @@ static int ssd16xx_set_pixel_format(const struct device *dev,
 	return -ENOTSUP;
 }
 
-static int ssd16xx_clear_cntlr_mem(struct device *dev, uint8_t ram_cmd,
+static int ssd16xx_clear_cntlr_mem(const struct device *dev, uint8_t ram_cmd,
 				   bool update)
 {
-	struct ssd16xx_data *driver = dev->driver_data;
+	struct ssd16xx_data *driver = dev->data;
 	uint8_t clear_page[EPD_PANEL_WIDTH];
 	uint16_t panel_h = EPD_PANEL_HEIGHT /
 			EPD_PANEL_NUMOF_ROWS_PER_PAGE;
@@ -433,9 +426,9 @@ static int ssd16xx_clear_cntlr_mem(struct device *dev, uint8_t ram_cmd,
 	return 0;
 }
 
-static inline int ssd16xx_load_ws_from_otp(struct device *dev)
+static inline int ssd16xx_load_ws_from_otp(const struct device *dev)
 {
-	struct ssd16xx_data *driver = dev->driver_data;
+	struct ssd16xx_data *driver = dev->data;
 	uint8_t tmp[2];
 
 #if DT_INST_NODE_HAS_PROP(0, tssv)
@@ -500,10 +493,10 @@ static inline int ssd16xx_load_ws_from_otp(struct device *dev)
 #endif
 }
 
-static int ssd16xx_load_ws_initial(struct device *dev)
+static int ssd16xx_load_ws_initial(const struct device *dev)
 {
 #if DT_INST_NODE_HAS_PROP(0, lut_initial)
-	struct ssd16xx_data *driver = dev->driver_data;
+	struct ssd16xx_data *driver = dev->data;
 
 	if (ssd16xx_write_cmd(driver, SSD16XX_CMD_UPDATE_LUT,
 			      ssd16xx_lut_initial,
@@ -519,10 +512,10 @@ static int ssd16xx_load_ws_initial(struct device *dev)
 	return 0;
 }
 
-static int ssd16xx_load_ws_default(struct device *dev)
+static int ssd16xx_load_ws_default(const struct device *dev)
 {
 #if DT_INST_NODE_HAS_PROP(0, lut_default)
-	struct ssd16xx_data *driver = dev->driver_data;
+	struct ssd16xx_data *driver = dev->data;
 
 	if (ssd16xx_write_cmd(driver, SSD16XX_CMD_UPDATE_LUT,
 			      ssd16xx_lut_default,
@@ -536,12 +529,12 @@ static int ssd16xx_load_ws_default(struct device *dev)
 	return 0;
 }
 
-static int ssd16xx_controller_init(struct device *dev)
+static int ssd16xx_controller_init(const struct device *dev)
 {
 	int err;
 	uint8_t tmp[3];
 	size_t len;
-	struct ssd16xx_data *driver = dev->driver_data;
+	struct ssd16xx_data *driver = dev->data;
 
 	LOG_DBG("");
 
@@ -641,22 +634,17 @@ static int ssd16xx_controller_init(struct device *dev)
 	return ssd16xx_clear_cntlr_mem(dev, SSD16XX_CMD_WRITE_RAM, true);
 }
 
-static int ssd16xx_init(struct device *dev)
+static int ssd16xx_init(const struct device *dev)
 {
-	struct ssd16xx_data *driver = dev->driver_data;
+	const struct ssd16xx_config *config = dev->config;
+	struct ssd16xx_data *driver = dev->data;
 
 	LOG_DBG("");
 
-	driver->spi_dev = device_get_binding(SSD16XX_BUS_NAME);
-	if (driver->spi_dev == NULL) {
-		LOG_ERR("Could not get SPI device for SSD16XX");
-		return -EIO;
+	if (!spi_is_ready(&config->bus)) {
+		LOG_ERR("SPI bus %s not ready", config->bus.bus->name);
+		return -ENODEV;
 	}
-
-	driver->spi_config.frequency = SSD16XX_SPI_FREQ;
-	driver->spi_config.operation = SPI_OP_MODE_MASTER | SPI_WORD_SET(8);
-	driver->spi_config.slave = DT_INST_REG_ADDR(0);
-	driver->spi_config.cs = NULL;
 
 	driver->reset = device_get_binding(SSD16XX_RESET_CNTRL);
 	if (driver->reset == NULL) {
@@ -685,23 +673,17 @@ static int ssd16xx_init(struct device *dev)
 	gpio_pin_configure(driver->busy, SSD16XX_BUSY_PIN,
 			   GPIO_INPUT | SSD16XX_BUSY_FLAGS);
 
-#if defined(SSD16XX_CS_CNTRL)
-	driver->cs_ctrl.gpio_dev = device_get_binding(SSD16XX_CS_CNTRL);
-	if (!driver->cs_ctrl.gpio_dev) {
-		LOG_ERR("Unable to get SPI GPIO CS device");
-		return -EIO;
-	}
-
-	driver->cs_ctrl.gpio_pin = SSD16XX_CS_PIN;
-	driver->cs_ctrl.gpio_dt_flags = SSD16XX_CS_FLAGS;
-	driver->cs_ctrl.delay = 0U;
-	driver->spi_config.cs = &driver->cs_ctrl;
-#endif
-
 	return ssd16xx_controller_init(dev);
 }
 
-static struct ssd16xx_data ssd16xx_driver;
+static const struct ssd16xx_config ssd16xx_config = {
+	.bus = SPI_DT_SPEC_INST_GET(
+		0, SPI_OP_MODE_MASTER | SPI_WORD_SET(8), 0)
+};
+
+static struct ssd16xx_data ssd16xx_driver = {
+	.config = &ssd16xx_config
+};
 
 static struct display_driver_api ssd16xx_driver_api = {
 	.blanking_on = ssd16xx_blanking_on,
@@ -717,7 +699,7 @@ static struct display_driver_api ssd16xx_driver_api = {
 };
 
 
-DEVICE_AND_API_INIT(ssd16xx, DT_INST_LABEL(0), ssd16xx_init,
+DEVICE_DT_INST_DEFINE(0, ssd16xx_init, NULL,
 		    &ssd16xx_driver, NULL,
-		    POST_KERNEL, CONFIG_APPLICATION_INIT_PRIORITY,
+		    POST_KERNEL, CONFIG_DISPLAY_INIT_PRIORITY,
 		    &ssd16xx_driver_api);

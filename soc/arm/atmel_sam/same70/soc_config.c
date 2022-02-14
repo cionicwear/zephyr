@@ -20,7 +20,7 @@
  *
  * @return 0
  */
-static int atmel_same70_config(struct device *dev)
+static int atmel_same70_config(const struct device *dev)
 {
 #ifdef CONFIG_SOC_ATMEL_SAME70_DISABLE_ERASE_PIN
 	/* Disable ERASE function on PB12 pin, this is controlled by Bus Matrix */
@@ -49,6 +49,11 @@ static int atmel_same70_config(struct device *dev)
 	while (!((PMC->PMC_SR) & PMC_SR_PCKRDY3)) {
 		;
 	}
+	/* Enable TDO/TRACESWO function on PB5 pin */
+	MATRIX->CCFG_SYSIO &= ~CCFG_SYSIO_SYSIO5;
+#else
+	/* Disable TDO/TRACESWO function on PB5 pin */
+	MATRIX->CCFG_SYSIO |= CCFG_SYSIO_SYSIO5;
 #endif
 
 	return 0;

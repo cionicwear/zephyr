@@ -20,3 +20,6 @@ supported:
   - counter
   - usb_device
   - watchdog
+  - adc
+  - dac
+  - dma

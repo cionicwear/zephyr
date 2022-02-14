@@ -277,11 +277,11 @@ int pthread_setschedparam(pthread_t pthread, int policy,
 		return EINVAL;
 	}
 
-	new_prio = posix_to_zephyr_priority(param->sched_priority, policy);
-
-	if (is_posix_prio_valid(new_prio, policy) == false) {
+	if (is_posix_prio_valid(param->sched_priority, policy) == false) {
 		return EINVAL;
 	}
+
+	new_prio = posix_to_zephyr_priority(param->sched_priority, policy);
 
 	k_thread_priority_set(thread, new_prio);
 	return 0;
@@ -379,9 +379,11 @@ void pthread_exit(void *retval)
 
 	SYS_SLIST_FOR_EACH_NODE(&self->key_list, node_l) {
 		thread_spec_data = (pthread_thread_data *)node_l;
-		key_obj = thread_spec_data->key;
-		if ((key_obj->destructor != NULL) && (thread_spec_data != NULL)) {
-			(key_obj->destructor)(thread_spec_data->spec_data);
+		if (thread_spec_data != NULL) {
+			key_obj = thread_spec_data->key;
+			if (key_obj->destructor != NULL) {
+				(key_obj->destructor)(thread_spec_data->spec_data);
+			}
 		}
 	}
 

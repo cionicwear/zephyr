@@ -49,14 +49,14 @@ struct k_thread multiple_wake_tid[TOTAL_THREADS_WAITING];
 
 /******************************************************************************/
 /* Helper functions */
-void futex_isr_wake(void *futex)
+void futex_isr_wake(const void *futex)
 {
 	k_futex_wake((struct k_futex *)futex, false);
 }
 
 void futex_wake_from_isr(struct k_futex *futex)
 {
-	irq_offload(futex_isr_wake, futex);
+	irq_offload(futex_isr_wake, (const void *)futex);
 }
 
 /* test futex wait, no futex wake */
@@ -473,10 +473,12 @@ void futex_wait_wake(void *p1, void *p2, void *p3)
 void futex_wake(void *p1, void *p2, void *p3)
 {
 	int32_t atomic_ret_val;
+	int32_t ret_value;
 
 	k_futex_wake(&simple_futex, false);
 
-	k_futex_wait(&simple_futex, 13, K_FOREVER);
+	ret_value = k_futex_wait(&simple_futex, 13, K_FOREVER);
+	zassert_equal(ret_value, 0, NULL);
 
 	/* Test user can write to the futex value
 	 * Use assertion to verify substraction correctness

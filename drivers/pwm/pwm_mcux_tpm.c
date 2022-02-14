@@ -25,7 +25,7 @@ LOG_MODULE_REGISTER(pwm_mcux_tpm);
 
 struct mcux_tpm_config {
 	TPM_Type *base;
-	char *clock_name;
+	const struct device *clock_dev;
 	clock_control_subsys_t clock_subsys;
 	tpm_clock_source_t tpm_clock_source;
 	tpm_clock_prescale_t prescale;
@@ -39,12 +39,12 @@ struct mcux_tpm_data {
 	tpm_chnl_pwm_signal_param_t channel[MAX_CHANNELS];
 };
 
-static int mcux_tpm_pin_set(struct device *dev, uint32_t pwm,
+static int mcux_tpm_pin_set(const struct device *dev, uint32_t pwm,
 			      uint32_t period_cycles, uint32_t pulse_cycles,
 			      pwm_flags_t flags)
 {
-	const struct mcux_tpm_config *config = dev->config_info;
-	struct mcux_tpm_data *data = dev->driver_data;
+	const struct mcux_tpm_config *config = dev->config;
+	struct mcux_tpm_data *data = dev->data;
 	uint8_t duty_cycle;
 
 	if ((period_cycles == 0U) || (pulse_cycles > period_cycles)) {
@@ -116,23 +116,22 @@ static int mcux_tpm_pin_set(struct device *dev, uint32_t pwm,
 	return 0;
 }
 
-static int mcux_tpm_get_cycles_per_sec(struct device *dev, uint32_t pwm,
+static int mcux_tpm_get_cycles_per_sec(const struct device *dev, uint32_t pwm,
 					 uint64_t *cycles)
 {
-	const struct mcux_tpm_config *config = dev->config_info;
-	struct mcux_tpm_data *data = dev->driver_data;
+	const struct mcux_tpm_config *config = dev->config;
+	struct mcux_tpm_data *data = dev->data;
 
 	*cycles = data->clock_freq >> config->prescale;
 
 	return 0;
 }
 
-static int mcux_tpm_init(struct device *dev)
+static int mcux_tpm_init(const struct device *dev)
 {
-	const struct mcux_tpm_config *config = dev->config_info;
-	struct mcux_tpm_data *data = dev->driver_data;
+	const struct mcux_tpm_config *config = dev->config;
+	struct mcux_tpm_data *data = dev->data;
 	tpm_chnl_pwm_signal_param_t *channel = data->channel;
-	struct device *clock_dev;
 	tpm_config_t tpm_config;
 	int i;
 
@@ -141,18 +140,12 @@ static int mcux_tpm_init(struct device *dev)
 		return -EINVAL;
 	}
 
-	clock_dev = device_get_binding(config->clock_name);
-	if (clock_dev == NULL) {
-		LOG_ERR("Could not get clock device");
-		return -EINVAL;
-	}
-
-	if (clock_control_on(clock_dev, config->clock_subsys)) {
+	if (clock_control_on(config->clock_dev, config->clock_subsys)) {
 		LOG_ERR("Could not turn on clock");
 		return -EINVAL;
 	}
 
-	if (clock_control_get_rate(clock_dev, config->clock_subsys,
+	if (clock_control_get_rate(config->clock_dev, config->clock_subsys,
 				   &data->clock_freq)) {
 		LOG_ERR("Could not get clock frequency");
 		return -EINVAL;
@@ -183,8 +176,7 @@ static const struct pwm_driver_api mcux_tpm_driver_api = {
 	static const struct mcux_tpm_config mcux_tpm_config_##n = { \
 		.base =	(TPM_Type *) \
 			DT_INST_REG_ADDR(n), \
-		.clock_name = \
-			DT_INST_CLOCKS_LABEL(n), \
+		.clock_dev = DEVICE_DT_GET(DT_INST_CLOCKS_CTLR(n)), \
 		.clock_subsys = (clock_control_subsys_t) \
 			DT_INST_CLOCKS_CELL(n, name), \
 		.tpm_clock_source = kTPM_SystemClock, \
@@ -194,9 +186,8 @@ static const struct pwm_driver_api mcux_tpm_driver_api = {
 		.mode = kTPM_EdgeAlignedPwm, \
 	}; \
 	static struct mcux_tpm_data mcux_tpm_data_##n; \
-	DEVICE_AND_API_INIT(mcux_tpm_##n, \
-			    DT_INST_LABEL(n), \
-			    &mcux_tpm_init, &mcux_tpm_data_##n, \
+	DEVICE_DT_INST_DEFINE(n, &mcux_tpm_init, NULL, \
+			    &mcux_tpm_data_##n, \
 			    &mcux_tpm_config_##n, \
 			    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE, \
 			    &mcux_tpm_driver_api);

@@ -70,6 +70,8 @@ typedef enum {
 #define __CM0_REV        0
 #elif defined(CONFIG_CPU_CORTEX_M0PLUS)
 #define __CM0PLUS_REV    0
+#elif defined(CONFIG_CPU_CORTEX_M1)
+#define __CM1_REV        0
 #elif defined(CONFIG_CPU_CORTEX_M3)
 #define __CM3_REV        0
 #elif defined(CONFIG_CPU_CORTEX_M4)
@@ -80,6 +82,8 @@ typedef enum {
 #define __CM23_REV       0
 #elif defined(CONFIG_CPU_CORTEX_M33)
 #define __CM33_REV       0
+#elif defined(CONFIG_CPU_CORTEX_M55)
+#define __CM55_REV       0
 #else
 #error "Unknown Cortex-M device"
 #endif
@@ -103,6 +107,8 @@ typedef enum {
 #include <core_cm0.h>
 #elif defined(CONFIG_CPU_CORTEX_M0PLUS)
 #include <core_cm0plus.h>
+#elif defined(CONFIG_CPU_CORTEX_M1)
+#include <core_cm1.h>
 #elif defined(CONFIG_CPU_CORTEX_M3)
 #include <core_cm3.h>
 #elif defined(CONFIG_CPU_CORTEX_M4)
@@ -113,6 +119,8 @@ typedef enum {
 #include <core_cm23.h>
 #elif defined(CONFIG_CPU_CORTEX_M33)
 #include <core_cm33.h>
+#elif defined(CONFIG_CPU_CORTEX_M55)
+#include <core_cm55.h>
 #else
 #error "Unknown Cortex-M device"
 #endif

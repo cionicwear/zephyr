@@ -21,6 +21,7 @@
 LOG_MODULE_REGISTER(BATTERY, CONFIG_ADC_LOG_LEVEL);
 
 #define VBATT DT_PATH(vbatt)
+#define ZEPHYR_USER DT_PATH(zephyr_user)
 
 #ifdef CONFIG_BOARD_THINGY52_NRF52832
 /* This board uses a divider that reduces max voltage to
@@ -35,7 +36,6 @@ LOG_MODULE_REGISTER(BATTERY, CONFIG_ADC_LOG_LEVEL);
 #endif
 
 struct io_channel_config {
-	const char *label;
 	uint8_t channel;
 };
 
@@ -59,7 +59,6 @@ struct divider_config {
 static const struct divider_config divider_config = {
 #if DT_NODE_HAS_STATUS(VBATT, okay)
 	.io_channel = {
-		DT_IO_CHANNELS_LABEL(VBATT),
 		DT_IO_CHANNELS_INPUT(VBATT),
 	},
 #if DT_NODE_HAS_PROP(VBATT, power_gpios)
@@ -73,19 +72,25 @@ static const struct divider_config divider_config = {
 	.full_ohm = DT_PROP(VBATT, full_ohms),
 #else /* /vbatt exists */
 	.io_channel = {
-		DT_LABEL(DT_ALIAS(adc_0)),
+		DT_IO_CHANNELS_INPUT(ZEPHYR_USER),
 	},
 #endif /* /vbatt exists */
 };
 
 struct divider_data {
-	struct device *adc;
-	struct device *gpio;
+	const struct device *adc;
+	const struct device *gpio;
 	struct adc_channel_cfg adc_cfg;
 	struct adc_sequence adc_seq;
 	int16_t raw;
 };
-static struct divider_data divider_data;
+static struct divider_data divider_data = {
+#if DT_NODE_HAS_STATUS(VBATT, okay)
+	.adc = DEVICE_DT_GET(DT_IO_CHANNELS_CTLR(VBATT)),
+#else
+	.adc = DEVICE_DT_GET(DT_IO_CHANNELS_CTLR(ZEPHYR_USER)),
+#endif
+};
 
 static int divider_setup(void)
 {
@@ -97,13 +102,8 @@ static int divider_setup(void)
 	struct adc_channel_cfg *accp = &ddp->adc_cfg;
 	int rc;
 
-	if (iocp->label == NULL) {
-		return -ENOTSUP;
-	}
-
-	ddp->adc = device_get_binding(iocp->label);
-	if (ddp->adc == NULL) {
-		LOG_ERR("Failed to get ADC %s", iocp->label);
+	if (!device_is_ready(ddp->adc)) {
+		LOG_ERR("ADC device is not ready %s", ddp->adc->name);
 		return -ENOENT;
 	}
 
@@ -157,7 +157,7 @@ static int divider_setup(void)
 
 static bool battery_ok;
 
-static int battery_setup(struct device *arg)
+static int battery_setup(const struct device *arg)
 {
 	int rc = divider_setup();
 

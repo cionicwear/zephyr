@@ -25,7 +25,7 @@ enum cc2520_gpio_index {
 };
 
 struct cc2520_gpio_configuration {
-	struct device *dev;
+	const struct device *dev;
 	uint32_t pin;
 };
 
@@ -38,14 +38,14 @@ struct cc2520_context {
 	struct cc2520_gpio_configuration gpios[CC2520_GPIO_IDX_MAX];
 	struct gpio_callback sfd_cb;
 	struct gpio_callback fifop_cb;
-	struct device *spi;
+	const struct device *spi;
 	struct spi_config spi_cfg;
 	uint8_t mac_addr[8];
 	/************TX************/
 	struct k_sem tx_sync;
 	atomic_t tx;
 	/************RX************/
-	K_THREAD_STACK_MEMBER(cc2520_rx_stack,
+	K_KERNEL_STACK_MEMBER(cc2520_rx_stack,
 			      CONFIG_IEEE802154_CC2520_RX_STACK_SIZE);
 	struct k_thread cc2520_rx_thread;
 	struct k_sem rx_lock;

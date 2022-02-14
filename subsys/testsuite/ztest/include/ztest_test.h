@@ -10,8 +10,8 @@
  * @brief Zephyr testing framework _test.
  */
 
-#ifndef __ZTEST_TEST_H__
-#define __ZTEST_TEST_H__
+#ifndef ZEPHYR_TESTSUITE_ZTEST_TEST_H_
+#define ZEPHYR_TESTSUITE_ZTEST_TEST_H_
 
 #include <app_memory/app_memdomain.h>
 
@@ -169,7 +169,6 @@ __syscall void z_test_1cpu_stop(void);
 #define ZTEST_BMEM	K_APP_BMEM(ztest_mem_partition)
 #define ZTEST_SECTION	K_APP_DMEM_SECTION(ztest_mem_partition)
 extern struct k_mem_partition ztest_mem_partition;
-extern struct k_mem_domain ztest_mem_domain;
 #else
 #define ZTEST_DMEM
 #define ZTEST_BMEM
@@ -214,4 +213,4 @@ extern struct k_mem_domain ztest_mem_domain;
 }
 #endif
 
-#endif /* __ZTEST_ASSERT_H__ */
+#endif /* ZEPHYR_TESTSUITE_ZTEST_TEST_H_ */

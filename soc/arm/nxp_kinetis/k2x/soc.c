@@ -25,15 +25,13 @@
 #include <arch/cpu.h>
 #include <arch/arm/aarch32/cortex_m/cmsis.h>
 
-#define PLLFLLSEL_MCGFLLCLK	(0)
-#define PLLFLLSEL_MCGPLLCLK	(1)
-#define PLLFLLSEL_IRC48MHZ	(3)
-
-#define ER32KSEL_OSC32KCLK	(0)
-#define ER32KSEL_RTC		(2)
-#define ER32KSEL_LPO1KHZ	(3)
-
 #define TIMESRC_OSCERCLK        (2)
+
+#define CLOCK_NODEID(clk) \
+	DT_CHILD(DT_INST(0, nxp_kinetis_sim), clk)
+
+#define CLOCK_DIVIDER(clk) \
+	DT_PROP_OR(CLOCK_NODEID(clk), clock_div, 1) - 1
 
 static const osc_config_t oscConfig = {
 	.freq = CONFIG_OSC_XTAL0_FREQ,
@@ -62,12 +60,12 @@ static const mcg_pll_config_t pll0Config = {
 };
 
 static const sim_clock_config_t simConfig = {
-	.pllFllSel = PLLFLLSEL_MCGPLLCLK, /* PLLFLLSEL select PLL. */
-	.er32kSrc = ER32KSEL_RTC,         /* ERCLK32K selection, use RTC. */
-	.clkdiv1 = SIM_CLKDIV1_OUTDIV1(CONFIG_K22_CORE_CLOCK_DIVIDER - 1) |
-		   SIM_CLKDIV1_OUTDIV2(CONFIG_K22_BUS_CLOCK_DIVIDER - 1) |
-		   SIM_CLKDIV1_OUTDIV3(CONFIG_K22_FLEXBUS_CLOCK_DIVIDER - 1) |
-		   SIM_CLKDIV1_OUTDIV4(CONFIG_K22_FLASH_CLOCK_DIVIDER - 1),
+	.pllFllSel = DT_PROP(DT_INST(0, nxp_kinetis_sim), pllfll_select),
+	.er32kSrc = DT_PROP(DT_INST(0, nxp_kinetis_sim), er32k_select),
+	.clkdiv1 = SIM_CLKDIV1_OUTDIV1(CLOCK_DIVIDER(core_clk)) |
+		   SIM_CLKDIV1_OUTDIV2(CLOCK_DIVIDER(bus_clk)) |
+		   SIM_CLKDIV1_OUTDIV3(CLOCK_DIVIDER(flexbus_clk)) |
+		   SIM_CLKDIV1_OUTDIV4(CLOCK_DIVIDER(flash_clk)),
 };
 
 /**
@@ -120,37 +118,17 @@ static ALWAYS_INLINE void clock_init(void)
  * @return 0
  */
 
-static int fsl_frdm_k22f_init(struct device *arg)
+static int fsl_frdm_k22f_init(const struct device *arg)
 {
 	ARG_UNUSED(arg);
 
 	unsigned int oldLevel; /* old interrupt lock level */
-#if !defined(CONFIG_ARM_MPU)
-#if defined(SYSMPU)
-	uint32_t temp_reg;
-#endif
-#endif /* !CONFIG_ARM_MPU */
 
 	/* disable interrupts */
 	oldLevel = irq_lock();
 
 	/* release I/O power hold to allow normal run state */
 	PMC->REGSC |= PMC_REGSC_ACKISO_MASK;
-
-#if !defined(CONFIG_ARM_MPU)
-	/*
-	 * Disable memory protection and clear slave port errors.
-	 * Note that the K22F does not implement the optional ARMv7-M memory
-	 * protection unit (MPU), specified by the architecture (PMSAv7), in the
-	 * Cortex-M4 core.  Instead, the processor includes its own MPU module.
-	 */
-#if defined(SYSMPU)
-	temp_reg = SYSMPU->CESR;
-	temp_reg &= ~SYSMPU_CESR_VLD_MASK;
-	temp_reg |= SYSMPU_CESR_SPERR_MASK;
-	SYSMPU->CESR = temp_reg;
-#endif
-#endif /* !CONFIG_ARM_MPU */
 
 	/* Initialize PLL/system clock to 120 MHz */
 	clock_init();

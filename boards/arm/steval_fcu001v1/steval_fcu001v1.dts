@@ -6,10 +6,11 @@
 
 /dts-v1/;
 #include <st/f4/stm32f401Xc.dtsi>
+#include <st/f4/stm32f401c(b-c)ux-pinctrl.dtsi>
 
 / {
 	model = "STMicroelectronics Flight Controller Board";
-	compatible = "st,flight-controller-board", "st,stm32f401";
+	compatible = "st,flight-controller-board";
 
 	chosen {
 		zephyr,console = &usart1;
@@ -37,12 +38,36 @@
 	};
 };
 
+&clk_hse {
+	clock-frequency = <DT_FREQ_M(16)>;
+	status = "okay";
+};
+
+&pll {
+	div-m = <16>;
+	mul-n = <336>;
+	div-p = <4>;
+	div-q = <7>;
+	clocks = <&clk_hse>;
+	status = "okay";
+};
+
+&rcc {
+	clocks = <&pll>;
+	clock-frequency = <DT_FREQ_M(84)>;
+	ahb-prescaler = <1>;
+	apb1-prescaler = <2>;
+	apb2-prescaler = <1>;
+};
+
 &i2c2 {
+	pinctrl-0 = <&i2c2_sda_pb3 &i2c2_scl_pb10>;
 	status = "okay";
 	clock-frequency = <I2C_BITRATE_FAST>;
 };
 
 &usart1 {
+	pinctrl-0 = <&usart1_tx_pa9 &usart1_rx_pa10>;
 	current-speed = <115200>;
 	status = "okay";
 };
@@ -52,6 +77,7 @@
 
 	pwm2: pwm {
 		status = "okay";
+		pinctrl-0 = <&tim2_ch1_pa0>;
 	};
 };
 

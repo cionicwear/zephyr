@@ -28,9 +28,9 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #define D10D24S 11
 
-static int eth_enc28j60_soft_reset(struct device *dev)
+static int eth_enc28j60_soft_reset(const struct device *dev)
 {
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	const struct eth_enc28j60_config *config = dev->config;
 	uint8_t buf[2] = { ENC28J60_SPI_SC, 0xFF };
 	const struct spi_buf tx_buf = {
 		.buf = buf,
@@ -41,12 +41,12 @@ static int eth_enc28j60_soft_reset(struct device *dev)
 		.count = 1
 	};
 
-	return spi_write(context->spi, &context->spi_cfg, &tx);
+	return spi_write_dt(&config->spi, &tx);
 }
 
-static void eth_enc28j60_set_bank(struct device *dev, uint16_t reg_addr)
+static void eth_enc28j60_set_bank(const struct device *dev, uint16_t reg_addr)
 {
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	const struct eth_enc28j60_config *config = dev->config;
 	uint8_t buf[2];
 	const struct spi_buf tx_buf = {
 		.buf = buf,
@@ -68,20 +68,21 @@ static void eth_enc28j60_set_bank(struct device *dev, uint16_t reg_addr)
 	buf[0] = ENC28J60_SPI_RCR | ENC28J60_REG_ECON1;
 	buf[1] = 0x0;
 
-	if (!spi_transceive(context->spi, &context->spi_cfg, &tx, &rx)) {
+	if (!spi_transceive_dt(&config->spi, &tx, &rx)) {
 		buf[0] = ENC28J60_SPI_WCR | ENC28J60_REG_ECON1;
 		buf[1] = (buf[1] & 0xFC) | ((reg_addr >> 8) & 0x0F);
 
-		spi_write(context->spi, &context->spi_cfg, &tx);
+		spi_write_dt(&config->spi, &tx);
 	} else {
 		LOG_DBG("Failure while setting bank to 0x%04x", reg_addr);
 	}
 }
 
-static void eth_enc28j60_write_reg(struct device *dev, uint16_t reg_addr,
+static void eth_enc28j60_write_reg(const struct device *dev,
+				   uint16_t reg_addr,
 				   uint8_t value)
 {
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	const struct eth_enc28j60_config *config = dev->config;
 	uint8_t buf[2];
 	const struct spi_buf tx_buf = {
 		.buf = buf,
@@ -95,13 +96,13 @@ static void eth_enc28j60_write_reg(struct device *dev, uint16_t reg_addr,
 	buf[0] = ENC28J60_SPI_WCR | (reg_addr & 0xFF);
 	buf[1] = value;
 
-	spi_write(context->spi, &context->spi_cfg, &tx);
+	spi_write_dt(&config->spi, &tx);
 }
 
-static void eth_enc28j60_read_reg(struct device *dev, uint16_t reg_addr,
+static void eth_enc28j60_read_reg(const struct device *dev, uint16_t reg_addr,
 				  uint8_t *value)
 {
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	const struct eth_enc28j60_config *config = dev->config;
 	uint8_t buf[3];
 	const struct spi_buf tx_buf = {
 		.buf = buf,
@@ -129,7 +130,7 @@ static void eth_enc28j60_read_reg(struct device *dev, uint16_t reg_addr,
 	buf[0] = ENC28J60_SPI_RCR | (reg_addr & 0xFF);
 	buf[1] = 0x0;
 
-	if (!spi_transceive(context->spi, &context->spi_cfg, &tx, &rx)) {
+	if (!spi_transceive_dt(&config->spi, &tx, &rx)) {
 		*value = buf[rx_size - 1];
 	} else {
 		LOG_DBG("Failure while reading register 0x%04x", reg_addr);
@@ -137,10 +138,11 @@ static void eth_enc28j60_read_reg(struct device *dev, uint16_t reg_addr,
 	}
 }
 
-static void eth_enc28j60_set_eth_reg(struct device *dev, uint16_t reg_addr,
+static void eth_enc28j60_set_eth_reg(const struct device *dev,
+				     uint16_t reg_addr,
 				     uint8_t value)
 {
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	const struct eth_enc28j60_config *config = dev->config;
 	uint8_t buf[2];
 	const struct spi_buf tx_buf = {
 		.buf = buf,
@@ -154,14 +156,15 @@ static void eth_enc28j60_set_eth_reg(struct device *dev, uint16_t reg_addr,
 	buf[0] = ENC28J60_SPI_BFS | (reg_addr & 0xFF);
 	buf[1] = value;
 
-	spi_write(context->spi, &context->spi_cfg, &tx);
+	spi_write_dt(&config->spi, &tx);
 }
 
 
-static void eth_enc28j60_clear_eth_reg(struct device *dev, uint16_t reg_addr,
+static void eth_enc28j60_clear_eth_reg(const struct device *dev,
+				       uint16_t reg_addr,
 				       uint8_t value)
 {
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	const struct eth_enc28j60_config *config = dev->config;
 	uint8_t buf[2];
 	const struct spi_buf tx_buf = {
 		.buf = buf,
@@ -175,13 +178,14 @@ static void eth_enc28j60_clear_eth_reg(struct device *dev, uint16_t reg_addr,
 	buf[0] = ENC28J60_SPI_BFC | (reg_addr & 0xFF);
 	buf[1] = value;
 
-	spi_write(context->spi, &context->spi_cfg, &tx);
+	spi_write_dt(&config->spi, &tx);
 }
 
-static void eth_enc28j60_write_mem(struct device *dev, uint8_t *data_buffer,
+static void eth_enc28j60_write_mem(const struct device *dev,
+				   uint8_t *data_buffer,
 				   uint16_t buf_len)
 {
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	const struct eth_enc28j60_config *config = dev->config;
 	uint8_t buf[1] = { ENC28J60_SPI_WBM };
 	struct spi_buf tx_buf[2] = {
 		{
@@ -204,7 +208,7 @@ static void eth_enc28j60_write_mem(struct device *dev, uint8_t *data_buffer,
 		tx_buf[1].buf = data_buffer;
 		tx_buf[1].len = MAX_BUFFER_LENGTH;
 
-		if (spi_write(context->spi, &context->spi_cfg, &tx)) {
+		if (spi_write_dt(&config->spi, &tx)) {
 			LOG_ERR("Failed to write memory");
 			return;
 		}
@@ -214,16 +218,17 @@ static void eth_enc28j60_write_mem(struct device *dev, uint8_t *data_buffer,
 		tx_buf[1].buf = data_buffer;
 		tx_buf[1].len = num_remaining;
 
-		if (spi_write(context->spi, &context->spi_cfg, &tx)) {
+		if (spi_write_dt(&config->spi, &tx)) {
 			LOG_ERR("Failed to write memory");
 		}
 	}
 }
 
-static void eth_enc28j60_read_mem(struct device *dev, uint8_t *data_buffer,
+static void eth_enc28j60_read_mem(const struct device *dev,
+				  uint8_t *data_buffer,
 				  uint16_t buf_len)
 {
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	const struct eth_enc28j60_config *config = dev->config;
 	uint8_t buf[1] = { ENC28J60_SPI_RBM };
 	const struct spi_buf tx_buf = {
 		.buf = buf,
@@ -255,7 +260,7 @@ static void eth_enc28j60_read_mem(struct device *dev, uint8_t *data_buffer,
 		rx_buf[1].buf = data_buffer;
 		rx_buf[1].len = MAX_BUFFER_LENGTH;
 
-		if (spi_transceive(context->spi, &context->spi_cfg, &tx, &rx)) {
+		if (spi_transceive_dt(&config->spi, &tx, &rx)) {
 			LOG_ERR("Failed to read memory");
 			return;
 		}
@@ -265,13 +270,14 @@ static void eth_enc28j60_read_mem(struct device *dev, uint8_t *data_buffer,
 		rx_buf[1].buf = data_buffer;
 		rx_buf[1].len = num_remaining;
 
-		if (spi_transceive(context->spi, &context->spi_cfg, &tx, &rx)) {
+		if (spi_transceive_dt(&config->spi, &tx, &rx)) {
 			LOG_ERR("Failed to read memory");
 		}
 	}
 }
 
-static void eth_enc28j60_write_phy(struct device *dev, uint16_t reg_addr,
+static void eth_enc28j60_write_phy(const struct device *dev,
+				   uint16_t reg_addr,
 				   int16_t data)
 {
 	uint8_t data_mistat;
@@ -290,7 +296,7 @@ static void eth_enc28j60_write_phy(struct device *dev, uint16_t reg_addr,
 	} while ((data_mistat & ENC28J60_BIT_MISTAT_BUSY));
 }
 
-static void eth_enc28j60_gpio_callback(struct device *dev,
+static void eth_enc28j60_gpio_callback(const struct device *dev,
 				       struct gpio_callback *cb,
 				       uint32_t pins)
 {
@@ -300,7 +306,7 @@ static void eth_enc28j60_gpio_callback(struct device *dev,
 	k_sem_give(&context->int_sem);
 }
 
-static void eth_enc28j60_init_buffers(struct device *dev)
+static void eth_enc28j60_init_buffers(const struct device *dev)
 {
 	uint8_t data_estat;
 
@@ -347,10 +353,10 @@ static void eth_enc28j60_init_buffers(struct device *dev)
 	} while (!(data_estat & ENC28J60_BIT_ESTAT_CLKRDY));
 }
 
-static void eth_enc28j60_init_mac(struct device *dev)
+static void eth_enc28j60_init_mac(const struct device *dev)
 {
-	const struct eth_enc28j60_config *config = dev->config_info;
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	const struct eth_enc28j60_config *config = dev->config;
+	struct eth_enc28j60_runtime *context = dev->data;
 	uint8_t data_macon;
 
 	eth_enc28j60_set_bank(dev, ENC28J60_REG_MACON1);
@@ -397,9 +403,9 @@ static void eth_enc28j60_init_mac(struct device *dev)
 			       context->mac_address[0]);
 }
 
-static void eth_enc28j60_init_phy(struct device *dev)
+static void eth_enc28j60_init_phy(const struct device *dev)
 {
-	const struct eth_enc28j60_config *config = dev->config_info;
+	const struct eth_enc28j60_config *config = dev->config;
 
 	if (config->full_duplex) {
 		eth_enc28j60_write_phy(dev, ENC28J60_PHY_PHCON1,
@@ -431,9 +437,9 @@ static struct net_if *get_iface(struct eth_enc28j60_runtime *ctx,
 #endif
 }
 
-static int eth_enc28j60_tx(struct device *dev, struct net_pkt *pkt)
+static int eth_enc28j60_tx(const struct device *dev, struct net_pkt *pkt)
 {
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	struct eth_enc28j60_runtime *context = dev->data;
 	uint16_t tx_bufaddr = ENC28J60_TXSTART;
 	uint16_t len = net_pkt_get_len(pkt);
 	uint8_t per_packet_control;
@@ -504,13 +510,97 @@ static int eth_enc28j60_tx(struct device *dev, struct net_pkt *pkt)
 	return 0;
 }
 
-static int eth_enc28j60_rx(struct device *dev, uint16_t *vlan_tag)
+static void enc28j60_read_packet(const struct device *dev, uint16_t *vlan_tag,
+				 uint16_t frm_len)
 {
-	const struct eth_enc28j60_config *config = dev->config_info;
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	const struct eth_enc28j60_config *config = dev->config;
+	struct eth_enc28j60_runtime *context = dev->data;
+	struct net_buf *pkt_buf;
+	struct net_pkt *pkt;
 	uint16_t lengthfr;
-	uint8_t counter;
 	uint8_t dummy[4];
+
+	/* Get the frame from the buffer */
+	pkt = net_pkt_rx_alloc_with_buffer(get_iface(context, *vlan_tag), frm_len,
+					   AF_UNSPEC, 0, K_MSEC(config->timeout));
+	if (!pkt) {
+		LOG_ERR("Could not allocate rx buffer");
+		eth_stats_update_errors_rx(get_iface(context, *vlan_tag));
+		return;
+	}
+
+	pkt_buf = pkt->buffer;
+	lengthfr = frm_len;
+
+	do {
+		size_t frag_len;
+		uint8_t *data_ptr;
+		size_t spi_frame_len;
+
+		data_ptr = pkt_buf->data;
+
+		/* Review the space available for the new frag */
+		frag_len = net_buf_tailroom(pkt_buf);
+
+		if (frm_len > frag_len) {
+			spi_frame_len = frag_len;
+		} else {
+			spi_frame_len = frm_len;
+		}
+
+		eth_enc28j60_read_mem(dev, data_ptr, spi_frame_len);
+
+		net_buf_add(pkt_buf, spi_frame_len);
+
+		/* One fragment has been written via SPI */
+		frm_len -= spi_frame_len;
+		pkt_buf = pkt_buf->frags;
+	} while (frm_len > 0);
+
+	/* Let's pop the useless CRC */
+	eth_enc28j60_read_mem(dev, dummy, 4);
+
+	/* Pops one padding byte from spi circular buffer
+	 * introduced by the device when the frame length is odd
+	 */
+	if (lengthfr & 0x01) {
+		eth_enc28j60_read_mem(dev, dummy, 1);
+	}
+
+#if defined(CONFIG_NET_VLAN)
+	struct net_eth_hdr *hdr = NET_ETH_HDR(pkt);
+
+	if (ntohs(hdr->type) == NET_ETH_PTYPE_VLAN) {
+		struct net_eth_vlan_hdr *hdr_vlan =
+			(struct net_eth_vlan_hdr *)NET_ETH_HDR(pkt);
+
+		net_pkt_set_vlan_tci(pkt, ntohs(hdr_vlan->vlan.tci));
+		*vlan_tag = net_pkt_vlan_tag(pkt);
+
+#if CONFIG_NET_TC_RX_COUNT > 1
+		enum net_priority prio;
+
+		prio = net_vlan2priority(net_pkt_vlan_priority(pkt));
+		net_pkt_set_priority(pkt, prio);
+#endif
+	} else {
+		net_pkt_set_iface(pkt, context->iface);
+	}
+#else /* CONFIG_NET_VLAN */
+	net_pkt_set_iface(pkt, context->iface);
+#endif /* CONFIG_NET_VLAN */
+
+	/* Feed buffer frame to IP stack */
+	LOG_DBG("Received packet of length %u", lengthfr);
+	if (net_recv_data(net_pkt_iface(pkt), pkt) < 0) {
+		net_pkt_unref(pkt);
+	}
+}
+
+static int eth_enc28j60_rx(const struct device *dev, uint16_t *vlan_tag)
+{
+	struct eth_enc28j60_runtime *context = dev->data;
+	uint8_t counter;
 
 	/* Errata 6. The Receive Packet Pending Interrupt Flag (EIR.PKTIF)
 	 * does not reliably/accurately report the status of pending packet.
@@ -525,10 +615,8 @@ static int eth_enc28j60_rx(struct device *dev, uint16_t *vlan_tag)
 	k_sem_take(&context->tx_rx_sem, K_FOREVER);
 
 	do {
-		struct net_buf *pkt_buf = NULL;
 		uint16_t frm_len = 0U;
 		uint8_t info[RSV_SIZE];
-		struct net_pkt *pkt;
 		uint16_t next_packet;
 		uint8_t rdptl = 0U;
 		uint8_t rdpth = 0U;
@@ -560,85 +648,9 @@ static int eth_enc28j60_rx(struct device *dev, uint16_t *vlan_tag)
 		 * minus CRC size at the end which is always present
 		 */
 		frm_len = sys_get_le16(info) - 4;
-		lengthfr = frm_len;
 
-		/* Get the frame from the buffer */
-		pkt = net_pkt_rx_alloc_with_buffer(
-			get_iface(context, *vlan_tag), frm_len,
-			AF_UNSPEC, 0, K_MSEC(config->timeout));
-		if (!pkt) {
-			LOG_ERR("Could not allocate rx buffer");
-			eth_stats_update_errors_rx(get_iface(context,
-							     *vlan_tag));
-			goto done;
-		}
+		enc28j60_read_packet(dev, vlan_tag, frm_len);
 
-		pkt_buf = pkt->buffer;
-
-		do {
-			size_t frag_len;
-			uint8_t *data_ptr;
-			size_t spi_frame_len;
-
-			data_ptr = pkt_buf->data;
-
-			/* Review the space available for the new frag */
-			frag_len = net_buf_tailroom(pkt_buf);
-
-			if (frm_len > frag_len) {
-				spi_frame_len = frag_len;
-			} else {
-				spi_frame_len = frm_len;
-			}
-
-			eth_enc28j60_read_mem(dev, data_ptr, spi_frame_len);
-
-			net_buf_add(pkt_buf, spi_frame_len);
-
-			/* One fragment has been written via SPI */
-			frm_len -= spi_frame_len;
-			pkt_buf = pkt_buf->frags;
-		} while (frm_len > 0);
-
-		/* Let's pop the useless CRC */
-		eth_enc28j60_read_mem(dev, dummy, 4);
-
-		/* Pops one padding byte from spi circular buffer
-		 * introduced by the device when the frame length is odd
-		 */
-		if (lengthfr & 0x01) {
-			eth_enc28j60_read_mem(dev, dummy, 1);
-		}
-
-#if defined(CONFIG_NET_VLAN)
-		struct net_eth_hdr *hdr = NET_ETH_HDR(pkt);
-
-		if (ntohs(hdr->type) == NET_ETH_PTYPE_VLAN) {
-			struct net_eth_vlan_hdr *hdr_vlan =
-				(struct net_eth_vlan_hdr *)NET_ETH_HDR(pkt);
-
-			net_pkt_set_vlan_tci(pkt, ntohs(hdr_vlan->vlan.tci));
-			*vlan_tag = net_pkt_vlan_tag(pkt);
-
-#if CONFIG_NET_TC_RX_COUNT > 1
-			enum net_priority prio;
-
-			prio = net_vlan2priority(net_pkt_vlan_priority(pkt));
-			net_pkt_set_priority(pkt, prio);
-#endif
-		} else {
-			net_pkt_set_iface(pkt, context->iface);
-		}
-#else /* CONFIG_NET_VLAN */
-		net_pkt_set_iface(pkt, context->iface);
-#endif /* CONFIG_NET_VLAN */
-
-		/* Feed buffer frame to IP stack */
-		LOG_DBG("Received packet of length %u", lengthfr);
-		if (net_recv_data(net_pkt_iface(pkt), pkt) < 0) {
-			net_pkt_unref(pkt);
-		}
-done:
 		/* Free buffer memory and decrement rx counter */
 		eth_enc28j60_set_bank(dev, ENC28J60_REG_ERXRDPTL);
 		eth_enc28j60_write_reg(dev, ENC28J60_REG_ERXRDPTL,
@@ -658,9 +670,9 @@ done:
 	return 0;
 }
 
-static void eth_enc28j60_rx_thread(struct device *dev)
+static void eth_enc28j60_rx_thread(const struct device *dev)
 {
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	struct eth_enc28j60_runtime *context = dev->data;
 	uint16_t vlan_tag = NET_VLAN_TAG_UNSPEC;
 	uint8_t int_stat;
 
@@ -678,7 +690,7 @@ static void eth_enc28j60_rx_thread(struct device *dev)
 	}
 }
 
-static enum ethernet_hw_caps eth_enc28j60_get_capabilities(struct device *dev)
+static enum ethernet_hw_caps eth_enc28j60_get_capabilities(const struct device *dev)
 {
 	ARG_UNUSED(dev);
 
@@ -691,8 +703,8 @@ static enum ethernet_hw_caps eth_enc28j60_get_capabilities(struct device *dev)
 
 static void eth_enc28j60_iface_init(struct net_if *iface)
 {
-	struct device *dev = net_if_get_device(iface);
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	const struct device *dev = net_if_get_device(iface);
+	struct eth_enc28j60_runtime *context = dev->data;
 
 	net_if_set_link_addr(iface, context->mac_address,
 			     sizeof(context->mac_address),
@@ -716,59 +728,38 @@ static const struct ethernet_api api_funcs = {
 	.send			= eth_enc28j60_tx,
 };
 
-static int eth_enc28j60_init(struct device *dev)
+static int eth_enc28j60_init(const struct device *dev)
 {
-	const struct eth_enc28j60_config *config = dev->config_info;
-	struct eth_enc28j60_runtime *context = dev->driver_data;
+	const struct eth_enc28j60_config *config = dev->config;
+	struct eth_enc28j60_runtime *context = dev->data;
 
 	/* SPI config */
-	context->spi_cfg.operation = SPI_WORD_SET(8);
-	context->spi_cfg.frequency = config->spi_freq;
-	context->spi_cfg.slave = config->spi_slave;
-
-	context->spi = device_get_binding((char *)config->spi_port);
-	if (!context->spi) {
-
-		LOG_ERR("SPI master port %s not found", config->spi_port);
+	if (!spi_is_ready(&config->spi)) {
+		LOG_ERR("SPI master port %s not ready", config->spi.bus->name);
 		return -EINVAL;
 	}
-
-#if DT_INST_SPI_DEV_HAS_CS_GPIOS(0)
-	context->spi_cs.gpio_dev =
-		device_get_binding((char *)config->spi_cs_port);
-	if (!context->spi_cs.gpio_dev) {
-		LOG_ERR("SPI CS port %s not found", config->spi_cs_port);
-		return -EINVAL;
-	}
-
-	context->spi_cs.gpio_pin = config->spi_cs_pin;
-	context->spi_cs.gpio_dt_flags = config->spi_cs_dt_flags;
-	context->spi_cfg.cs = &context->spi_cs;
-#endif
 
 	/* Initialize GPIO */
-	context->gpio = device_get_binding((char *)config->gpio_port);
-	if (!context->gpio) {
-		LOG_ERR("GPIO port %s not found", config->gpio_port);
+	if (!device_is_ready(config->interrupt.port)) {
+		LOG_ERR("GPIO port %s not ready", config->interrupt.port->name);
 		return -EINVAL;
 	}
 
-	if (gpio_pin_configure(context->gpio, config->gpio_pin,
-			       GPIO_INPUT | config->gpio_flags)) {
-		LOG_ERR("Unable to configure GPIO pin %u", config->gpio_pin);
+	if (gpio_pin_configure_dt(&config->interrupt, GPIO_INPUT)) {
+		LOG_ERR("Unable to configure GPIO pin %u",
+			config->interrupt.pin);
 		return -EINVAL;
 	}
 
 	gpio_init_callback(&(context->gpio_cb), eth_enc28j60_gpio_callback,
-			   BIT(config->gpio_pin));
+			   BIT(config->interrupt.pin));
 
-	if (gpio_add_callback(context->gpio, &(context->gpio_cb))) {
+	if (gpio_add_callback(config->interrupt.port, &(context->gpio_cb))) {
 		return -EINVAL;
 	}
 
-	gpio_pin_interrupt_configure(context->gpio,
-				     config->gpio_pin,
-				     GPIO_INT_EDGE_TO_ACTIVE);
+	gpio_pin_interrupt_configure_dt(&config->interrupt,
+					GPIO_INT_EDGE_TO_ACTIVE);
 
 	if (eth_enc28j60_soft_reset(dev)) {
 		LOG_ERR("Soft-reset failed");
@@ -819,23 +810,14 @@ static struct eth_enc28j60_runtime eth_enc28j60_0_runtime = {
 };
 
 static const struct eth_enc28j60_config eth_enc28j60_0_config = {
-	.gpio_port = DT_INST_GPIO_LABEL(0, int_gpios),
-	.gpio_pin = DT_INST_GPIO_PIN(0, int_gpios),
-	.gpio_flags = DT_INST_GPIO_FLAGS(0, int_gpios),
-	.spi_port = DT_INST_BUS_LABEL(0),
-	.spi_freq  = DT_INST_PROP(0, spi_max_frequency),
-	.spi_slave = DT_INST_REG_ADDR(0),
-#if DT_INST_SPI_DEV_HAS_CS_GPIOS(0)
-	.spi_cs_port = DT_INST_SPI_DEV_CS_GPIOS_LABEL(0),
-	.spi_cs_pin = DT_INST_SPI_DEV_CS_GPIOS_PIN(0),
-	.spi_cs_dt_flags = DT_INST_SPI_DEV_CS_GPIOS_FLAGS(0),
-#endif
+	.spi = SPI_DT_SPEC_INST_GET(0, SPI_WORD_SET(8), 0),
+	.interrupt = GPIO_DT_SPEC_INST_GET(0, int_gpios),
 	.full_duplex = IS_ENABLED(CONFIG_ETH_ENC28J60_0_FULL_DUPLEX),
 	.timeout = CONFIG_ETH_ENC28J60_TIMEOUT,
 };
 
-ETH_NET_DEVICE_INIT(enc28j60_0, DT_INST_LABEL(0),
-		    eth_enc28j60_init, device_pm_control_nop,
+ETH_NET_DEVICE_DT_INST_DEFINE(0,
+		    eth_enc28j60_init, NULL,
 		    &eth_enc28j60_0_runtime, &eth_enc28j60_0_config,
 		    CONFIG_ETH_INIT_PRIORITY, &api_funcs, NET_ETH_MTU);
 

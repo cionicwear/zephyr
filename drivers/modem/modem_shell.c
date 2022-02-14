@@ -63,12 +63,31 @@ static int cmd_modem_list(const struct shell *shell, size_t argc,
 				"\tModel:        %s\n"
 				"\tRevision:     %s\n"
 				"\tIMEI:         %s\n"
-				"\tRSSI:         %d\n", i,
+#if defined(CONFIG_MODEM_SIM_NUMBERS)
+				"\tIMSI:         %s\n"
+				"\tICCID:        %s\n"
+#endif
+#if defined(CONFIG_MODEM_CELL_INFO)
+				"\tOperator:     %d\n"
+				"\tLAC:          %d\n"
+				"\tCellId:       %d\n"
+#endif
+				"\tRSSI:         %d\n",
+			       i,
 			       UART_DEV_NAME(mdm_ctx),
 			       mdm_ctx->data_manufacturer,
 			       mdm_ctx->data_model,
 			       mdm_ctx->data_revision,
 			       mdm_ctx->data_imei,
+#if defined(CONFIG_MODEM_SIM_NUMBERS)
+			       mdm_ctx->data_imsi,
+			       mdm_ctx->data_iccid,
+#endif
+#if defined(CONFIG_MODEM_CELL_INFO)
+			       mdm_ctx->data_operator,
+			       mdm_ctx->data_lac,
+			       mdm_ctx->data_cellid,
+#endif
 			       mdm_ctx->data_rssi);
 		}
 	}
@@ -134,7 +153,7 @@ static int cmd_modem_send(const struct shell *shell, size_t argc,
 }
 
 #if defined(CONFIG_GSM_MUX)
-static void uart_mux_cb(struct device *uart, struct device *dev,
+static void uart_mux_cb(const struct device *uart, const struct device *dev,
 			int dlci_address, void *user_data)
 {
 	struct modem_shell_user_data *data = user_data;

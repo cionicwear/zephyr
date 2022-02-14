@@ -8,24 +8,16 @@
 #ifndef ZEPHYR_DRIVERS_FLASH_FLASH_STM32_H_
 #define ZEPHYR_DRIVERS_FLASH_FLASH_STM32_H_
 
-#if defined(CONFIG_SOC_SERIES_STM32L4X) || \
-	defined(CONFIG_SOC_SERIES_STM32F0X) || \
-	defined(CONFIG_SOC_SERIES_STM32F1X) || \
-	defined(CONFIG_SOC_SERIES_STM32F3X) || \
-	defined(CONFIG_SOC_SERIES_STM32G0X) || \
-	defined(CONFIG_SOC_SERIES_STM32G4X)
+#if DT_NODE_HAS_PROP(DT_INST(0, st_stm32_flash_controller), clocks) || \
+	DT_NODE_HAS_PROP(DT_INST(0, st_stm32h7_flash_controller), clocks)
 #include <drivers/clock_control.h>
 #include <drivers/clock_control/stm32_clock_control.h>
 #endif
 
 struct flash_stm32_priv {
 	FLASH_TypeDef *regs;
-#if defined(CONFIG_SOC_SERIES_STM32L4X) || \
-	defined(CONFIG_SOC_SERIES_STM32F0X) || \
-	defined(CONFIG_SOC_SERIES_STM32F1X) || \
-	defined(CONFIG_SOC_SERIES_STM32F3X) || \
-	defined(CONFIG_SOC_SERIES_STM32G0X) || \
-	defined(CONFIG_SOC_SERIES_STM32G4X)
+#if DT_NODE_HAS_PROP(DT_INST(0, st_stm32_flash_controller), clocks) || \
+	DT_NODE_HAS_PROP(DT_INST(0, st_stm32h7_flash_controller), clocks)
 	/* clock subsystem driving this peripheral */
 	struct stm32_pclken pclken;
 #endif
@@ -41,11 +33,11 @@ struct flash_stm32_priv {
 	/* as flash node property 'write-block-size' */
 #endif
 
-#define FLASH_STM32_PRIV(dev) ((struct flash_stm32_priv *)((dev)->driver_data))
+#define FLASH_STM32_PRIV(dev) ((struct flash_stm32_priv *)((dev)->data))
 #define FLASH_STM32_REGS(dev) (FLASH_STM32_PRIV(dev)->regs)
 
 #ifdef CONFIG_FLASH_PAGE_LAYOUT
-static inline bool flash_stm32_range_exists(struct device *dev,
+static inline bool flash_stm32_range_exists(const struct device *dev,
 					    off_t offset,
 					    uint32_t len)
 {
@@ -56,23 +48,24 @@ static inline bool flash_stm32_range_exists(struct device *dev,
 }
 #endif	/* CONFIG_FLASH_PAGE_LAYOUT */
 
-bool flash_stm32_valid_range(struct device *dev, off_t offset,
+bool flash_stm32_valid_range(const struct device *dev, off_t offset,
 			     uint32_t len, bool write);
 
-int flash_stm32_write_range(struct device *dev, unsigned int offset,
+int flash_stm32_write_range(const struct device *dev, unsigned int offset,
 			    const void *data, unsigned int len);
 
-int flash_stm32_block_erase_loop(struct device *dev, unsigned int offset,
+int flash_stm32_block_erase_loop(const struct device *dev,
+				 unsigned int offset,
 				 unsigned int len);
 
-int flash_stm32_wait_flash_idle(struct device *dev);
+int flash_stm32_wait_flash_idle(const struct device *dev);
 
 #ifdef CONFIG_SOC_SERIES_STM32WBX
-int flash_stm32_check_status(struct device *dev);
+int flash_stm32_check_status(const struct device *dev);
 #endif /* CONFIG_SOC_SERIES_STM32WBX */
 
 #ifdef CONFIG_FLASH_PAGE_LAYOUT
-void flash_stm32_page_layout(struct device *dev,
+void flash_stm32_page_layout(const struct device *dev,
 			     const struct flash_pages_layout **layout,
 			     size_t *layout_size);
 #endif

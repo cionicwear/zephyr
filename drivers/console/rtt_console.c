@@ -25,7 +25,7 @@ static bool host_present;
  */
 static void wait(void)
 {
-	if (k_is_in_isr()) {
+	if (!IS_ENABLED(CONFIG_MULTITHREADING) || k_is_in_isr()) {
 		if (IS_ENABLED(CONFIG_RTT_TX_RETRY_IN_INTERRUPT)) {
 			k_busy_wait(1000*CONFIG_RTT_TX_RETRY_DELAY_MS);
 		}
@@ -78,7 +78,7 @@ static int rtt_console_out(int character)
 	return character;
 }
 
-static int rtt_console_init(struct device *d)
+static int rtt_console_init(const struct device *d)
 {
 	ARG_UNUSED(d);
 

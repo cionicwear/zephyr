@@ -170,6 +170,45 @@ int strncmp(const char *s1, const char *s2, size_t n)
 	return (n == 0) ? 0 : (*s1 - *s2);
 }
 
+/**
+ * @brief Separate `str` by any char in `sep` and return NULL terminated
+ * sections. Consecutive `sep` chars in `str` are treated as a single
+ * separator.
+ *
+ * @return pointer to NULL terminated string or NULL on errors.
+ */
+char *strtok_r(char *str, const char *sep, char **state)
+{
+	char *start, *end;
+
+	start = str ? str : *state;
+
+	/* skip leading delimiters */
+	while (*start && strchr(sep, *start)) {
+		start++;
+	}
+
+	if (*start == '\0') {
+		*state = start;
+		return NULL;
+	}
+
+	/* look for token chars */
+	end = start;
+	while (*end && !strchr(sep, *end)) {
+		end++;
+	}
+
+	if (*end != '\0') {
+		*end = '\0';
+		*state = end + 1;
+	} else {
+		*state = end;
+	}
+
+	return start;
+}
+
 char *strcat(char *_MLIBC_RESTRICT dest, const char *_MLIBC_RESTRICT src)
 {
 	strcpy(dest + strlen(dest), src);
@@ -262,6 +301,8 @@ void *memcpy(void *_MLIBC_RESTRICT d, const void *_MLIBC_RESTRICT s, size_t n)
 
 	unsigned char *d_byte = (unsigned char *)d;
 	const unsigned char *s_byte = (const unsigned char *)s;
+
+#if !defined(CONFIG_MINIMAL_LIBC_OPTIMIZE_STRING_FOR_SIZE)
 	const uintptr_t mask = sizeof(mem_word_t) - 1;
 
 	if ((((uintptr_t)d ^ (uintptr_t)s_byte) & mask) == 0) {
@@ -274,7 +315,7 @@ void *memcpy(void *_MLIBC_RESTRICT d, const void *_MLIBC_RESTRICT s, size_t n)
 			}
 			*(d_byte++) = *(s_byte++);
 			n--;
-		};
+		}
 
 		/* do word-sized copying as long as possible */
 
@@ -289,6 +330,7 @@ void *memcpy(void *_MLIBC_RESTRICT d, const void *_MLIBC_RESTRICT s, size_t n)
 		d_byte = (unsigned char *)d_word;
 		s_byte = (unsigned char *)s_word;
 	}
+#endif
 
 	/* do byte-sized copying until finished */
 
@@ -314,13 +356,14 @@ void *memset(void *buf, int c, size_t n)
 	unsigned char *d_byte = (unsigned char *)buf;
 	unsigned char c_byte = (unsigned char)c;
 
+#if !defined(CONFIG_MINIMAL_LIBC_OPTIMIZE_STRING_FOR_SIZE)
 	while (((uintptr_t)d_byte) & (sizeof(mem_word_t) - 1)) {
 		if (n == 0) {
 			return buf;
 		}
 		*(d_byte++) = c_byte;
 		n--;
-	};
+	}
 
 	/* do word-sized initialization as long as possible */
 
@@ -341,6 +384,7 @@ void *memset(void *buf, int c, size_t n)
 	/* do byte-sized initialization until finished */
 
 	d_byte = (unsigned char *)d_word;
+#endif
 
 	while (n > 0) {
 		*(d_byte++) = c_byte;

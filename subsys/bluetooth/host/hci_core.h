@@ -1,6 +1,7 @@
 /* hci_core.h - Bluetooth HCI core access */
 
 /*
+ * Copyright (c) 2021 Nordic Semiconductor ASA
  * Copyright (c) 2015-2016 Intel Corporation
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -37,12 +38,11 @@ enum {
 	BT_DEV_EXPLICIT_SCAN,
 	BT_DEV_ACTIVE_SCAN,
 	BT_DEV_SCAN_FILTER_DUP,
-	BT_DEV_SCAN_WL,
+	BT_DEV_SCAN_FILTERED,
 	BT_DEV_SCAN_LIMITED,
 	BT_DEV_INITIATING,
 
 	BT_DEV_RPA_VALID,
-	BT_DEV_RPA_TIMEOUT_SET,
 
 	BT_DEV_ID_PENDING,
 	BT_DEV_STORE_ID,
@@ -60,6 +60,14 @@ enum {
 /* Flags which should not be cleared upon HCI_Reset */
 #define BT_DEV_PERSISTENT_FLAGS (BIT(BT_DEV_ENABLE) | \
 				 BIT(BT_DEV_PRESET_ID))
+
+#if defined(CONFIG_BT_EXT_ADV_LEGACY_SUPPORT)
+/* Check the feature bit for extended or legacy advertising commands */
+#define BT_DEV_FEAT_LE_EXT_ADV(feat) BT_FEAT_LE_EXT_ADV(feat)
+#else
+/* Always use extended advertising commands. */
+#define BT_DEV_FEAT_LE_EXT_ADV(feat)  1
+#endif
 
 enum {
 	/* Advertising set has been created in the host. */
@@ -84,7 +92,9 @@ enum {
 	/* Advertiser set is currently advertising in the controller. */
 	BT_ADV_ENABLED,
 	/* Advertiser should include name in advertising data */
-	BT_ADV_INCLUDE_NAME,
+	BT_ADV_INCLUDE_NAME_AD,
+	/* Advertiser should include name in scan response data */
+	BT_ADV_INCLUDE_NAME_SD,
 	/* Advertiser set is connectable */
 	BT_ADV_CONNECTABLE,
 	/* Advertiser set is scannable */
@@ -101,19 +111,31 @@ enum {
 	BT_ADV_PERSIST,
 	/* Advertiser has been temporarily disabled. */
 	BT_ADV_PAUSED,
+	/* Periodic Advertising has been enabled in the controller. */
+	BT_PER_ADV_ENABLED,
+	/* Periodic Advertising parameters has been set in the controller. */
+	BT_PER_ADV_PARAMS_SET,
+	/* Constant Tone Extension parameters for Periodic Advertising
+	 * has been set in the controller.
+	 */
+	BT_PER_ADV_CTE_PARAMS_SET,
+	/* Constant Tone Extension for Periodic Advertising has been enabled
+	 * in the controller.
+	 */
+	BT_PER_ADV_CTE_ENABLED,
 
 	BT_ADV_NUM_FLAGS,
 };
 
 struct bt_le_ext_adv {
 	/* ID Address used for advertising */
-	uint8_t                    id;
+	uint8_t                 id;
 
 	/* Advertising handle */
-	uint16_t			handle;
+	uint8_t                 handle;
 
 	/* Current local Random Address */
-	bt_addr_le_t		random_addr;
+	bt_addr_le_t            random_addr;
 
 	/* Current target address */
 	bt_addr_le_t            target_addr;
@@ -126,6 +148,62 @@ struct bt_le_ext_adv {
 	/* TX Power in use by the controller */
 	int8_t                    tx_power;
 #endif /* defined(CONFIG_BT_EXT_ADV) */
+
+	struct k_work_delayable	lim_adv_timeout_work;
+};
+
+enum {
+	/** Periodic Advertising Sync has been created in the host. */
+	BT_PER_ADV_SYNC_CREATED,
+
+	/** Periodic Advertising Sync is established and can be terminated */
+	BT_PER_ADV_SYNC_SYNCED,
+
+	/** Periodic Advertising Sync is attempting to create sync */
+	BT_PER_ADV_SYNC_SYNCING,
+
+	/** Periodic Advertising Sync is attempting to create sync using
+	 *  Advertiser List
+	 */
+	BT_PER_ADV_SYNC_SYNCING_USE_LIST,
+
+	/** Periodic Advertising Sync established with reporting disabled */
+	BT_PER_ADV_SYNC_RECV_DISABLED,
+
+	/** Constant Tone Extension for Periodic Advertising has been enabled
+	 * in the Controller.
+	 */
+	BT_PER_ADV_SYNC_CTE_ENABLED,
+
+	BT_PER_ADV_SYNC_NUM_FLAGS,
+};
+
+struct bt_le_per_adv_sync {
+	/** Periodic Advertiser Address */
+	bt_addr_le_t addr;
+
+	/** Advertiser SID */
+	uint8_t sid;
+
+	/** Sync handle */
+	uint16_t handle;
+
+	/** Periodic advertising interval (N * 1.25 ms) */
+	uint16_t interval;
+
+	/** Periodic advertising advertiser clock accuracy (ppm) */
+	uint16_t clock_accuracy;
+
+	/** Advertiser PHY */
+	uint8_t phy;
+
+#if defined(CONFIG_BT_DF_CONNECTIONLESS_CTE_RX)
+	/** Accepted CTE type */
+	uint8_t cte_type;
+#endif /* CONFIG_BT_DF_CONNECTIONLESS_CTE_RX */
+
+	/** Flags */
+	ATOMIC_DEFINE(flags, BT_PER_ADV_SYNC_NUM_FLAGS);
 };
 
 struct bt_dev_le {
@@ -136,9 +214,15 @@ struct bt_dev_le {
 
 #if defined(CONFIG_BT_CONN)
 	/* Controller buffer information */
-	uint16_t			mtu;
+	uint16_t		mtu;
 	struct k_sem		pkts;
+	uint16_t		acl_mtu;
+	struct k_sem		acl_pkts;
 #endif /* CONFIG_BT_CONN */
+#if defined(CONFIG_BT_ISO)
+	uint16_t		iso_mtu;
+	struct k_sem		iso_pkts;
+#endif /* CONFIG_BT_ISO */
 
 #if defined(CONFIG_BT_SMP)
 	/* Size of the the controller resolving list */
@@ -181,6 +265,22 @@ struct bt_dev {
 #else
 	/* Pointer to reserved advertising set */
 	struct bt_le_ext_adv    *adv;
+#if (CONFIG_BT_ID_MAX > 1) && (CONFIG_BT_EXT_ADV_MAX_ADV_SET > 1)
+	/* When supporting multiple concurrent connectable advertising sets
+	 * with multiple identities, we need to know the identity of
+	 * the terminating advertising set to identify the connection object.
+	 * The identity of the advertising set is determined by its
+	 * advertising handle, which is part of the
+	 * LE Set Advertising Set Terminated event which is always sent
+	 * _after_ the LE Enhanced Connection complete event.
+	 * Therefore we need cache this event until its identity is known.
+	 */
+	struct {
+		bool valid;
+		struct bt_hci_evt_le_enh_conn_complete evt;
+	} cached_conn_complete[MIN(CONFIG_BT_MAX_CONN,
+				CONFIG_BT_EXT_ADV_MAX_ADV_SET)];
+#endif
 #endif
 	/* Current local Random Address */
 	bt_addr_le_t            random_addr;
@@ -239,7 +339,7 @@ struct bt_dev {
 	uint8_t			irk[CONFIG_BT_ID_MAX][16];
 
 	/* Work used for RPA rotation */
-	struct k_delayed_work rpa_update;
+	struct k_work_delayable rpa_update;
 #endif
 
 	/* Local Name */
@@ -251,7 +351,26 @@ struct bt_dev {
 extern struct bt_dev bt_dev;
 #if defined(CONFIG_BT_SMP) || defined(CONFIG_BT_BREDR)
 extern const struct bt_conn_auth_cb *bt_auth;
+
+enum bt_security_err bt_security_err_get(uint8_t hci_err);
 #endif /* CONFIG_BT_SMP || CONFIG_BT_BREDR */
+
+/* Data type to store state related with command to be updated
+ * when command completes successfully.
+ */
+struct bt_hci_cmd_state_set {
+	/* Target memory to be updated */
+	atomic_t *target;
+	/* Bit number to be updated in target memory */
+	int bit;
+	/* Value to determine if enable or disable bit */
+	bool val;
+};
+
+/* Set command state related with the command buffer */
+void bt_hci_cmd_state_set_init(struct net_buf *buf,
+			       struct bt_hci_cmd_state_set *state,
+			       atomic_t *target, int bit, bool val);
 
 int bt_hci_disconnect(uint16_t handle, uint8_t reason);
 
@@ -259,6 +378,7 @@ bool bt_le_conn_params_valid(const struct bt_le_conn_param *param);
 int bt_le_set_data_len(struct bt_conn *conn, uint16_t tx_octets, uint16_t tx_time);
 int bt_le_set_phy(struct bt_conn *conn, uint8_t all_phys,
 		  uint8_t pref_tx_phy, uint8_t pref_rx_phy, uint8_t phy_opts);
+uint8_t bt_get_phy(uint8_t hci_phy);
 
 int bt_le_scan_update(bool fast_scan);
 
@@ -276,14 +396,57 @@ void bt_id_add(struct bt_keys *keys);
 void bt_id_del(struct bt_keys *keys);
 
 int bt_setup_random_id_addr(void);
-void bt_setup_public_id_addr(void);
+int bt_setup_public_id_addr(void);
 
 void bt_finalize_init(void);
 
-int bt_le_adv_start_internal(const struct bt_le_adv_param *param,
-			     const struct bt_data *ad, size_t ad_len,
-			     const struct bt_data *sd, size_t sd_len,
-			     const bt_addr_le_t *peer);
+void bt_hci_host_num_completed_packets(struct net_buf *buf);
 
-void bt_le_adv_resume(void);
-bool bt_le_scan_random_addr_check(void);
+/* HCI event handlers */
+void bt_hci_pin_code_req(struct net_buf *buf);
+void bt_hci_link_key_notify(struct net_buf *buf);
+void bt_hci_link_key_req(struct net_buf *buf);
+void bt_hci_io_capa_resp(struct net_buf *buf);
+void bt_hci_io_capa_req(struct net_buf *buf);
+void bt_hci_ssp_complete(struct net_buf *buf);
+void bt_hci_user_confirm_req(struct net_buf *buf);
+void bt_hci_user_passkey_notify(struct net_buf *buf);
+void bt_hci_user_passkey_req(struct net_buf *buf);
+void bt_hci_auth_complete(struct net_buf *buf);
+
+/* ECC HCI event handlers */
+void bt_hci_evt_le_pkey_complete(struct net_buf *buf);
+void bt_hci_evt_le_dhkey_complete(struct net_buf *buf);
+
+/* Common HCI event handlers */
+void bt_hci_le_enh_conn_complete(struct bt_hci_evt_le_enh_conn_complete *evt);
+
+/* Scan HCI event handlers */
+void bt_hci_le_adv_report(struct net_buf *buf);
+void bt_hci_le_scan_timeout(struct net_buf *buf);
+void bt_hci_le_adv_ext_report(struct net_buf *buf);
+void bt_hci_le_per_adv_sync_established(struct net_buf *buf);
+void bt_hci_le_per_adv_report(struct net_buf *buf);
+void bt_hci_le_per_adv_sync_lost(struct net_buf *buf);
+void bt_hci_le_biginfo_adv_report(struct net_buf *buf);
+void bt_hci_le_df_connectionless_iq_report(struct net_buf *buf);
+void bt_hci_le_past_received(struct net_buf *buf);
+
+/* Adv HCI event handlers */
+void bt_hci_le_adv_set_terminated(struct net_buf *buf);
+void bt_hci_le_scan_req_received(struct net_buf *buf);
+
+/* BR/EDR HCI event handlers */
+void bt_hci_conn_req(struct net_buf *buf);
+void bt_hci_conn_complete(struct net_buf *buf);
+
+
+void bt_hci_inquiry_complete(struct net_buf *buf);
+void bt_hci_inquiry_result_with_rssi(struct net_buf *buf);
+void bt_hci_extended_inquiry_result(struct net_buf *buf);
+void bt_hci_remote_name_request_complete(struct net_buf *buf);
+
+void bt_hci_read_remote_features_complete(struct net_buf *buf);
+void bt_hci_read_remote_ext_features_complete(struct net_buf *buf);
+void bt_hci_role_change(struct net_buf *buf);
+void bt_hci_synchronous_conn_complete(struct net_buf *buf);

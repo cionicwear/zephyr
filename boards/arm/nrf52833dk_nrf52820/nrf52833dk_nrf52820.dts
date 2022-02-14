@@ -79,6 +79,7 @@
 		sw1 = &button1;
 		sw2 = &button2;
 		sw3 = &button3;
+		bootloader-led0 = &led0;
 	};
 };
 
@@ -91,14 +92,16 @@
 };
 
 &uart0 {
-	compatible = "nordic,nrf-uart";
+	compatible = "nordic,nrf-uarte";
 	status = "okay";
-	hw-flow-control;
-	current-speed = <1000000>;
-	tx-pin = <4>;
-	rx-pin = <5>;
-	rts-pin = <6>;
+    hw-flow-control;
+    current-speed = <1000000>;
+    tx-pin = <4>;
+    rx-pin = <5>;
+    rts-pin = <6>;
+	rx-pull-up;
 	cts-pin = <7>;
+	cts-pull-up;
 };
 
 &i2c0 {
@@ -128,10 +131,7 @@
 };
 
 &flash0 {
-	/*
-	 * For more information, see:
-	 * http://docs.zephyrproject.org/latest/guides/dts/index.html#flash-partitions
-	 */
+
 	partitions {
 		compatible = "fixed-partitions";
 		#address-cells = <1>;
@@ -143,20 +143,12 @@
 		};
 		slot0_partition: partition@8000 {
 			label = "image-0";
-			reg = <0x00008000 0x1A000>;
-		};
-		slot1_partition: partition@22000 {
-			label = "image-1";
-			reg = <0x00022000 0x1A000>;
-		};
-		storage_partition: partition@3c000 {
-			label = "image-scratch";
-			reg = <0x0003c000 0x4000>;
+			reg = <0x00008000 0x38000>;
 		};
 	};
 };
 
-&usbd {
+zephyr_udc0: &usbd {
 	compatible = "nordic,nrf-usbd";
 	status = "okay";
 };

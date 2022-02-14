@@ -93,14 +93,14 @@ struct net_route_test {
 	struct net_linkaddr ll_addr;
 };
 
-int net_route_dev_init(struct device *dev)
+int net_route_dev_init(const struct device *dev)
 {
 	return 0;
 }
 
-static uint8_t *net_route_get_mac(struct device *dev)
+static uint8_t *net_route_get_mac(const struct device *dev)
 {
-	struct net_route_test *route = dev->driver_data;
+	struct net_route_test *route = dev->data;
 
 	if (route->mac_addr[2] == 0x00) {
 		/* 00-00-5E-00-53-xx Documentation RFC 7042 */
@@ -126,7 +126,7 @@ static void net_route_iface_init(struct net_if *iface)
 			     NET_LINK_ETHERNET);
 }
 
-static int tester_send(struct device *dev, struct net_pkt *pkt)
+static int tester_send(const struct device *dev, struct net_pkt *pkt)
 {
 	if (!pkt->frags) {
 		TC_ERROR("No data to send!\n");
@@ -164,7 +164,7 @@ out:
 	return 0;
 }
 
-static int tester_send_peer(struct device *dev, struct net_pkt *pkt)
+static int tester_send_peer(const struct device *dev, struct net_pkt *pkt)
 {
 	if (!pkt->frags) {
 		TC_ERROR("No data to send!\n");
@@ -218,14 +218,14 @@ static struct dummy_api net_route_if_api_peer = {
 #define _ETH_L2_CTX_TYPE NET_L2_GET_CTX_TYPE(DUMMY_L2)
 
 NET_DEVICE_INIT_INSTANCE(net_route_test, "net_route_test", host,
-			 net_route_dev_init, device_pm_control_nop,
+			 net_route_dev_init, NULL,
 			 &net_route_data, NULL,
 			 CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
 			 &net_route_if_api, _ETH_L2_LAYER,
 			 _ETH_L2_CTX_TYPE, 127);
 
 NET_DEVICE_INIT_INSTANCE(net_route_test_peer, "net_route_test_peer", peer,
-			 net_route_dev_init, device_pm_control_nop,
+			 net_route_dev_init, NULL,
 			 &net_route_data_peer, NULL,
 			 CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
 			 &net_route_if_api_peer, _ETH_L2_LAYER,
@@ -237,8 +237,8 @@ static void test_init(void)
 	struct net_if_addr *ifaddr;
 	int i;
 
-	my_iface = net_if_get_default();
-	peer_iface = net_if_get_default() + 1;
+	my_iface = net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY));
+	peer_iface = net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY)) + 1;
 
 	DBG("Interfaces: [%d] my %p, [%d] peer %p\n",
 	    net_if_get_by_iface(my_iface), my_iface,
@@ -341,7 +341,7 @@ static void test_populate_nbr_cache(void)
 
 	zassert_true(net_test_send_ns(peer_iface, &peer_addr), NULL);
 
-	nbr = net_ipv6_nbr_add(net_if_get_default(),
+	nbr = net_ipv6_nbr_add(net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY)),
 			       &peer_addr,
 			       &net_route_data_peer.ll_addr,
 			       false,

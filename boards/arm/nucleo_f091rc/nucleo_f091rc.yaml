@@ -19,6 +19,8 @@ supported:
   - counter
   - watchdog
   - adc
+  - dac
+  - dma
 testing:
   ignore_tags:
     - net

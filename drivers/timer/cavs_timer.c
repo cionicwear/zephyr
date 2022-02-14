@@ -7,7 +7,6 @@
 #include <drivers/timer/system_timer.h>
 #include <sys_clock.h>
 #include <spinlock.h>
-#include <arch/xtensa/xtensa_rtos.h>
 
 /**
  * @file
@@ -36,6 +35,9 @@ static volatile struct soc_dsp_shim_regs *shim_regs =
 
 static void set_compare(uint64_t time)
 {
+	/* Disarm the comparator to prevent spurious triggers */
+	shim_regs->dspwctcs &= ~DSP_WCT_CS_TA(TIMER);
+
 #if (TIMER == 0)
 	/* Set compare register */
 	shim_regs->dspwct0c = time;
@@ -52,7 +54,22 @@ static void set_compare(uint64_t time)
 
 static uint64_t count(void)
 {
-	return shim_regs->walclk;
+	/* The count register is 64 bits, but we're a 32 bit CPU that
+	 * can only read four bytes at a time, so a bit of care is
+	 * needed to prevent racing against a wraparound of the low
+	 * word.  Wrap the low read between two reads of the high word
+	 * and make sure it didn't change.
+	 */
+	volatile uint32_t *wc = (void *)&shim_regs->walclk;
+	uint32_t hi0, hi1, lo;
+
+	do {
+		hi0 = wc[1];
+		lo = wc[0];
+		hi1 = wc[1];
+	} while (hi0 != hi1);
+
+	return (((uint64_t)hi0) << 32) | lo;
 }
 
 static uint32_t count32(void)
@@ -60,7 +77,7 @@ static uint32_t count32(void)
 	return shim_regs->walclk32_lo;
 }
 
-static void compare_isr(void *arg)
+static void compare_isr(const void *arg)
 {
 	ARG_UNUSED(arg);
 	uint64_t curr;
@@ -71,7 +88,7 @@ static void compare_isr(void *arg)
 	curr = count();
 
 #ifdef CONFIG_SMP
-	/* If it has been too long since last_count,
+	/* If we are too soon since last_count,
 	 * this interrupt is likely the same interrupt
 	 * event but being processed by another CPU.
 	 * Since it has already been processed and
@@ -101,10 +118,11 @@ static void compare_isr(void *arg)
 
 	k_spin_unlock(&lock, key);
 
-	z_clock_announce(dticks);
+	sys_clock_announce(dticks);
 }
 
-int z_clock_driver_init(struct device *device)
+/* Runs on core 0 only */
+int sys_clock_driver_init(const struct device *dev)
 {
 	uint64_t curr = count();
 
@@ -115,13 +133,13 @@ int z_clock_driver_init(struct device *device)
 	return 0;
 }
 
-void z_clock_set_timeout(int32_t ticks, bool idle)
+void sys_clock_set_timeout(int32_t ticks, bool idle)
 {
 	ARG_UNUSED(idle);
 
 #ifdef CONFIG_TICKLESS_KERNEL
 	ticks = ticks == K_TICKS_FOREVER ? MAX_TICKS : ticks;
-	ticks = MAX(MIN(ticks - 1, (int32_t)MAX_TICKS), 0);
+	ticks = CLAMP(ticks - 1, 0, (int32_t)MAX_TICKS);
 
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	uint64_t curr = count();
@@ -147,7 +165,7 @@ void z_clock_set_timeout(int32_t ticks, bool idle)
 #endif
 }
 
-uint32_t z_clock_elapsed(void)
+uint32_t sys_clock_elapsed(void)
 {
 	if (!IS_ENABLED(CONFIG_TICKLESS_KERNEL)) {
 		return 0;
@@ -159,12 +177,12 @@ uint32_t z_clock_elapsed(void)
 	return ret;
 }
 
-uint32_t z_timer_cycle_get_32(void)
+uint32_t sys_clock_cycle_get_32(void)
 {
 	return count32();
 }
 
-#if defined(CONFIG_SMP) && CONFIG_MP_NUM_CPUS > 1
+/* Runs on secondary cores */
 void smp_timer_init(void)
 {
 	/* This enables the Timer 0 (or 1) interrupt for CPU n.
@@ -176,6 +194,5 @@ void smp_timer_init(void)
 			+ CAVS_ICTL_INT_CPU_OFFSET(arch_curr_cpu()->id)
 			+ 0x04,
 		    22 + TIMER);
-	irq_enable(XTENSA_IRQ_NUMBER(TIMER_IRQ));
+	irq_enable(TIMER_IRQ);
 }
-#endif

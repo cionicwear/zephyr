@@ -1,7 +1,3 @@
-/* USB device controller driver for STM32 devices */
-
-#define DT_DRV_COMPAT st_stm32_usb
-
 /*
  * Copyright (c) 2017 Christer Weinigel.
  * Copyright (c) 2017, I-SENSE group of ICCS
@@ -11,47 +7,25 @@
 
 /**
  * @file
- * @brief USB device controller driver for STM32 devices
+ * @brief USB device controller shim driver for STM32 devices
  *
  * This driver uses the STM32 Cube low level drivers to talk to the USB
  * device controller on the STM32 family of devices using the
  * STM32Cube HAL layer.
- *
- * There is a bit of an impedance mismatch between the Zephyr
- * usb_device and the STM32 Cube HAL layer where higher levels make
- * assumptions about the low level drivers that don't quite match how
- * the low level drivers actually work.
- *
- * The usb_dc_ep_read function expects to get the data it wants
- * immediately while the HAL_PCD_EP_Receive function only starts a
- * read transaction and the data won't be available until call to
- * HAL_PCD_DataOutStageCallback. To work around this I've
- * had to add an extra packet buffer in the driver which wastes memory
- * and also leads to an extra copy of all received data.  It would be
- * better if higher drivers could call start_read and get_read_count
- * in this driver directly.
- *
- * To enable the driver together with the CDC_ACM high level driver,
- * add the following to your board's defconfig:
- *
- * CONFIG_USB=y
- * CONFIG_USB_DC_STM32=y
- * CONFIG_USB_CDC_ACM=y
- * CONFIG_USB_DEVICE_STACK=y
- *
- * To use the USB device as a console, also add:
- *
- * CONFIG_UART_CONSOLE_ON_DEV_NAME="CDC_ACM"
- * CONFIG_USB_UART_CONSOLE=y
- * CONFIG_UART_LINE_CTRL=y
  */
 
 #include <soc.h>
+#include <stm32_ll_bus.h>
+#include <stm32_ll_pwr.h>
+#include <stm32_ll_rcc.h>
+#include <stm32_ll_system.h>
 #include <string.h>
 #include <usb/usb_device.h>
 #include <drivers/clock_control/stm32_clock_control.h>
 #include <sys/util.h>
 #include <drivers/gpio.h>
+#include <pinmux/pinmux_stm32.h>
+#include "stm32_hsem.h"
 
 #define LOG_LEVEL CONFIG_USB_DRIVER_LOG_LEVEL
 #include <logging/log.h>
@@ -62,55 +36,47 @@ LOG_MODULE_REGISTER(usb_dc_stm32);
 #endif
 
 #if DT_HAS_COMPAT_STATUS_OKAY(st_stm32_otghs)
-#define USB_BASE_ADDRESS	DT_REG_ADDR(DT_INST(0, st_stm32_otghs))
-#define USB_IRQ			DT_IRQ_BY_NAME(DT_INST(0, st_stm32_otghs), otghs, irq)
-#define USB_IRQ_PRI		DT_IRQ_BY_NAME(DT_INST(0, st_stm32_otghs), otghs, priority)
-#define USB_NUM_BIDIR_ENDPOINTS	DT_PROP(DT_INST(0, st_stm32_otghs), num_bidir_endpoints)
-#define USB_RAM_SIZE		DT_PROP(DT_INST(0, st_stm32_otghs), ram_size)
-#if DT_NODE_HAS_PROP(DT_INST(0, st_stm32_otghs), maximum_speed)
-#define USB_MAXIMUM_SPEED	DT_PROP(DT_INST(0, st_stm32_otghs), maximum_speed)
-#endif
-#define USB_CLOCK_BITS		DT_CLOCKS_CELL(DT_INST(0, st_stm32_otghs), bits)
-#define USB_CLOCK_BUS		DT_CLOCKS_CELL(DT_INST(0, st_stm32_otghs), bus)
+#define DT_DRV_COMPAT st_stm32_otghs
+#define USB_IRQ_NAME  otghs
 #elif DT_HAS_COMPAT_STATUS_OKAY(st_stm32_otgfs)
-#define USB_BASE_ADDRESS	DT_REG_ADDR(DT_INST(0, st_stm32_otgfs))
-#define USB_IRQ			DT_IRQ_BY_NAME(DT_INST(0, st_stm32_otgfs), otgfs, irq)
-#define USB_IRQ_PRI		DT_IRQ_BY_NAME(DT_INST(0, st_stm32_otgfs), otgfs, priority)
-#define USB_NUM_BIDIR_ENDPOINTS	DT_PROP(DT_INST(0, st_stm32_otgfs), num_bidir_endpoints)
-#define USB_RAM_SIZE		DT_PROP(DT_INST(0, st_stm32_otgfs), ram_size)
-#if DT_NODE_HAS_PROP(DT_INST(0, st_stm32_otgfs), maximum_speed)
-#define USB_MAXIMUM_SPEED	DT_PROP(DT_INST(0, st_stm32_otgfs), maximum_speed)
-#endif
-#define USB_CLOCK_BITS		DT_CLOCKS_CELL(DT_INST(0, st_stm32_otgfs), bits)
-#define USB_CLOCK_BUS		DT_CLOCKS_CELL(DT_INST(0, st_stm32_otgfs), bus)
+#define DT_DRV_COMPAT st_stm32_otgfs
+#define USB_IRQ_NAME  otgfs
 #elif DT_HAS_COMPAT_STATUS_OKAY(st_stm32_usb)
-#define USB_BASE_ADDRESS	DT_REG_ADDR(DT_INST(0, st_stm32_usb))
-#define USB_IRQ			DT_IRQ_BY_NAME(DT_INST(0, st_stm32_usb), usb, irq)
-#define USB_IRQ_PRI		DT_IRQ_BY_NAME(DT_INST(0, st_stm32_usb), usb, priority)
-#define USB_NUM_BIDIR_ENDPOINTS	DT_PROP(DT_INST(0, st_stm32_usb), num_bidir_endpoints)
-#define USB_RAM_SIZE		DT_PROP(DT_INST(0, st_stm32_usb), ram_size)
-#if DT_NODE_HAS_PROP(DT_INST(0, st_stm32_usb), maximum_speed)
-#define USB_MAXIMUM_SPEED	DT_PROP(DT_INST(0, st_stm32_usb), maximum_speed)
-#endif
-#define USB_CLOCK_BITS		DT_CLOCKS_CELL(DT_INST(0, st_stm32_usb), bits)
-#define USB_CLOCK_BUS		DT_CLOCKS_CELL(DT_INST(0, st_stm32_usb), bus)
-#if DT_NODE_HAS_PROP(DT_INST(0, st_stm32_usb), enable_pin_remap)
-#define USB_ENABLE_PIN_REMAP	DT_PROP(DT_INST(0, st_stm32_usb), enable_pin_remap)
+#define DT_DRV_COMPAT st_stm32_usb
+#define USB_IRQ_NAME  usb
+#if DT_INST_NODE_HAS_PROP(0, enable_pin_remap)
+#define USB_ENABLE_PIN_REMAP	DT_INST_PROP(0, enable_pin_remap)
 #endif
 #endif
+
+#define USB_BASE_ADDRESS	DT_INST_REG_ADDR(0)
+#define USB_IRQ			DT_INST_IRQ_BY_NAME(0, USB_IRQ_NAME, irq)
+#define USB_IRQ_PRI		DT_INST_IRQ_BY_NAME(0, USB_IRQ_NAME, priority)
+#define USB_NUM_BIDIR_ENDPOINTS	DT_INST_PROP(0, num_bidir_endpoints)
+#define USB_RAM_SIZE		DT_INST_PROP(0, ram_size)
+#define USB_CLOCK_BITS		DT_INST_CLOCKS_CELL(0, bits)
+#define USB_CLOCK_BUS		DT_INST_CLOCKS_CELL(0, bus)
+#if DT_INST_NODE_HAS_PROP(0, maximum_speed)
+#define USB_MAXIMUM_SPEED	DT_INST_PROP(0, maximum_speed)
+#endif
+static const struct soc_gpio_pinctrl usb_pinctrl[] =
+						ST_STM32_DT_INST_PINCTRL(0, 0);
+
+
+#define USB_OTG_HS_EMB_PHY (DT_HAS_COMPAT_STATUS_OKAY(st_stm32_usbphyc) && \
+			    DT_HAS_COMPAT_STATUS_OKAY(st_stm32_otghs))
 
 /*
- * USB and USB_OTG_FS are defined in STM32Cube HAL and allows to distinguish
- * between two kind of USB DC. STM32 F0, F3, L0 and G4 series support USB device
- * controller. STM32 F4 and F7 series support USB_OTG_FS device controller.
- * STM32 F1 and L4 series support either USB or USB_OTG_FS device controller.
+ * USB, USB_OTG_FS and USB_DRD_FS are defined in STM32Cube HAL and allows to
+ * distinguish between two kind of USB DC. STM32 F0, F3, L0 and G4 series
+ * support USB device controller. STM32 F4 and F7 series support USB_OTG_FS
+ * device controller. STM32 F1 and L4 series support either USB or USB_OTG_FS
+ * device controller.STM32 G0 series supports USB_DRD_FS device controller.
  *
- * WARNING: Don't mix USB defined in STM32Cube HAL and CONFIG_USB from Zephyr
+ * WARNING: Don't mix USB defined in STM32Cube HAL and CONFIG_USB_* from Zephyr
  * Kconfig system.
  */
-#ifdef USB
-
-#define CFG_HW_RCC_CRRCR_CCIPR_SEMID	5
+#if defined(USB) || defined(USB_DRD_FS)
 
 #define EP0_MPS 64U
 #define EP_MPS 64U
@@ -180,7 +146,7 @@ struct usb_dc_stm32_state {
 	struct usb_dc_stm32_ep_state in_ep_state[USB_NUM_BIDIR_ENDPOINTS];
 	uint8_t ep_buf[USB_NUM_BIDIR_ENDPOINTS][EP_MPS];
 
-#ifdef USB
+#if defined(USB) || defined(USB_DRD_FS)
 	uint32_t pma_offset;
 #endif /* USB */
 };
@@ -206,7 +172,7 @@ static struct usb_dc_stm32_ep_state *usb_dc_stm32_get_ep_state(uint8_t ep)
 	return ep_state_base + USB_EP_GET_IDX(ep);
 }
 
-static void usb_dc_stm32_isr(void *arg)
+static void usb_dc_stm32_isr(const void *arg)
 {
 	HAL_PCD_IRQHandler(&usb_dc_stm32_state.pcd);
 }
@@ -220,7 +186,7 @@ void HAL_PCD_SOFCallback(PCD_HandleTypeDef *hpcd)
 
 static int usb_dc_stm32_clock_enable(void)
 {
-	struct device *clk = device_get_binding(STM32_CLOCK_CONTROL_NAME);
+	const struct device *clk = DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE);
 	struct stm32_pclken pclken = {
 		.bus = USB_CLOCK_BUS,
 		.enr = USB_CLOCK_BITS,
@@ -233,7 +199,9 @@ static int usb_dc_stm32_clock_enable(void)
 	 * that instead.  Example reference manual RM0360 for
 	 * STM32F030x4/x6/x8/xC and STM32F070x6/xB.
 	 */
-#if defined(RCC_HSI48_SUPPORT) || defined(CONFIG_SOC_SERIES_STM32WBX)
+#if defined(RCC_HSI48_SUPPORT) || \
+	defined(CONFIG_SOC_SERIES_STM32WBX) || \
+	defined(CONFIG_SOC_SERIES_STM32H7X)
 
 	/*
 	 * In STM32L0 series, HSI48 requires VREFINT and its buffer
@@ -251,10 +219,7 @@ static int usb_dc_stm32_clock_enable(void)
 	}
 #endif /* CONFIG_SOC_SERIES_STM32L0X */
 
-#ifdef CONFIG_SOC_SERIES_STM32WBX
-	while (LL_HSEM_1StepLock(HSEM, CFG_HW_RCC_CRRCR_CCIPR_SEMID)) {
-	}
-#endif /* CONFIG_SOC_SERIES_STM32WBX */
+	z_stm32_hsem_lock(CFG_HW_CLK48_CONFIG_SEMID, HSEM_LOCK_DEFAULT_RETRY);
 
 	LL_RCC_HSI48_Enable();
 	while (!LL_RCC_HSI48_IsReady()) {
@@ -262,6 +227,14 @@ static int usb_dc_stm32_clock_enable(void)
 	}
 
 	LL_RCC_SetUSBClockSource(LL_RCC_USB_CLKSOURCE_HSI48);
+
+#if !defined(CONFIG_SOC_SERIES_STM32WBX)
+	/* Specially for STM32WB, don't unlock the HSEM to prevent M0 core
+	 * to disable HSI48 clock used for RNG.
+	 */
+	z_stm32_hsem_unlock(CFG_HW_CLK48_CONFIG_SEMID);
+#endif /* CONFIG_SOC_SERIES_STM32WBX */
+
 #elif defined(LL_RCC_USB_CLKSOURCE_NONE)
 	/* When MSI is configured in PLL mode with a 32.768 kHz clock source,
 	 * the MSI frequency can be automatically trimmed by hardware to reach
@@ -269,7 +242,7 @@ static int usb_dc_stm32_clock_enable(void)
 	 * device. For now, we only use MSI for USB if not already used as
 	 * system clock source.
 	 */
-#if defined(CONFIG_CLOCK_STM32_MSI_PLL_MODE) && !defined(CONFIG_CLOCK_STM32_SYSCLK_SRC_MSI)
+#if STM32_MSI_PLL_MODE && !STM32_SYSCLK_SRC_MSI
 	LL_RCC_MSI_Enable();
 	while (!LL_RCC_MSI_IsReady()) {
 		/* Wait for MSI to become ready */
@@ -284,8 +257,35 @@ static int usb_dc_stm32_clock_enable(void)
 	} else {
 		LOG_ERR("Unable to set USB clock source to PLL.");
 	}
-#endif /* CONFIG_CLOCK_STM32_MSI_PLL_MODE && !CONFIG_CLOCK_STM32_SYSCLK_SRC_MSI */
-#endif /* RCC_HSI48_SUPPORT / LL_RCC_USB_CLKSOURCE_NONE */
+#endif /* STM32_MSI_PLL_MODE && !STM32_SYSCLK_SRC_MSI */
+
+#elif defined(RCC_CFGR_OTGFSPRE)
+	/* On STM32F105 and STM32F107 parts the USB OTGFSCLK is derived from
+	 * PLL1, and must result in a 48 MHz clock... the options to achieve
+	 * this are as below, controlled by the RCC_CFGR_OTGFSPRE bit.
+	 *   - PLLCLK * 2 / 2     i.e: PLLCLK == 48 MHz
+	 *   - PLLCLK * 2 / 3     i.e: PLLCLK == 72 MHz
+	 *
+	 * this requires that the system is running from PLLCLK
+	 */
+	if (LL_RCC_GetSysClkSource() == LL_RCC_SYS_CLKSOURCE_STATUS_PLL) {
+		switch (sys_clock_hw_cycles_per_sec()) {
+		case 48000000U:
+			LL_RCC_SetUSBClockSource(LL_RCC_USB_CLKSOURCE_PLL_DIV_2);
+			break;
+		case 72000000U:
+			LL_RCC_SetUSBClockSource(LL_RCC_USB_CLKSOURCE_PLL_DIV_3);
+			break;
+		default:
+			LOG_ERR("Unable to set USB clock source (incompatible PLLCLK rate)");
+			return -EIO;
+		}
+	} else {
+		LOG_ERR("Unable to set USB clock source (not using PLL1)");
+		return -EIO;
+	}
+
+#endif /* RCC_HSI48_SUPPORT / LL_RCC_USB_CLKSOURCE_NONE / RCC_CFGR_OTGFSPRE */
 
 	if (clock_control_on(clk, (clock_control_subsys_t *)&pclken) != 0) {
 		LOG_ERR("Unable to enable USB clock");
@@ -313,7 +313,7 @@ static uint32_t usb_dc_stm32_get_maximum_speed(void)
 	 * If max-speed is not passed via DT, set it to USB controller's
 	 * maximum hardware capability.
 	 */
-#if DT_HAS_COMPAT_STATUS_OKAY(st_stm32_usbphyc) && DT_HAS_COMPAT_STATUS_OKAY(st_stm32_otghs)
+#if USB_OTG_HS_EMB_PHY
 	uint32_t speed = USB_OTG_SPEED_HIGH;
 #else
 	uint32_t speed = USB_OTG_SPEED_FULL;
@@ -324,7 +324,7 @@ static uint32_t usb_dc_stm32_get_maximum_speed(void)
 	if (!strncmp(USB_MAXIMUM_SPEED, "high-speed", 10)) {
 		speed = USB_OTG_SPEED_HIGH;
 	} else if (!strncmp(USB_MAXIMUM_SPEED, "full-speed", 10)) {
-#if DT_HAS_COMPAT_STATUS_OKAY(st_stm32_usbphyc) && DT_HAS_COMPAT_STATUS_OKAY(st_stm32_otghs)
+#if defined(CONFIG_SOC_SERIES_STM32H7X) || defined(USB_OTG_HS_EMB_PHY)
 		speed = USB_OTG_SPEED_HIGH_IN_FULL;
 #else
 		speed = USB_OTG_SPEED_FULL;
@@ -345,8 +345,12 @@ static int usb_dc_stm32_init(void)
 	HAL_StatusTypeDef status;
 	unsigned int i;
 
+#if defined(USB) || defined(USB_DRD_FS)
 #ifdef USB
 	usb_dc_stm32_state.pcd.Instance = USB;
+#else
+	usb_dc_stm32_state.pcd.Instance = USB_DRD_FS;
+#endif
 	usb_dc_stm32_state.pcd.Init.speed = PCD_SPEED_FULL;
 	usb_dc_stm32_state.pcd.Init.dev_endpoints = USB_NUM_BIDIR_ENDPOINTS;
 	usb_dc_stm32_state.pcd.Init.phy_itface = PCD_PHY_EMBEDDED;
@@ -360,7 +364,7 @@ static int usb_dc_stm32_init(void)
 #endif
 	usb_dc_stm32_state.pcd.Init.dev_endpoints = USB_NUM_BIDIR_ENDPOINTS;
 	usb_dc_stm32_state.pcd.Init.speed = usb_dc_stm32_get_maximum_speed();
-#if DT_HAS_COMPAT_STATUS_OKAY(st_stm32_usbphyc) && DT_HAS_COMPAT_STATUS_OKAY(st_stm32_otghs)
+#if USB_OTG_HS_EMB_PHY
 	usb_dc_stm32_state.pcd.Init.phy_itface = USB_OTG_HS_EMBEDDED_PHY;
 #else
 	usb_dc_stm32_state.pcd.Init.phy_itface = PCD_PHY_EMBEDDED;
@@ -377,6 +381,36 @@ static int usb_dc_stm32_init(void)
 #ifdef CONFIG_USB_DEVICE_SOF
 	usb_dc_stm32_state.pcd.Init.Sof_enable = 1;
 #endif /* CONFIG_USB_DEVICE_SOF */
+
+#if defined(CONFIG_SOC_SERIES_STM32H7X)
+	/* Currently assuming FS mode. Need to disable the ULPI clock on USB2 and
+	 * enable the FS clock. Need to make this dependent on HS or FS config.
+	 */
+
+	LL_AHB1_GRP1_DisableClock(LL_AHB1_GRP1_PERIPH_USB2OTGHSULPI);
+	LL_AHB1_GRP1_DisableClockSleep(LL_AHB1_GRP1_PERIPH_USB2OTGHSULPI);
+
+	LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_USB2OTGHS);
+	LL_AHB1_GRP1_EnableClockSleep(LL_AHB1_GRP1_PERIPH_USB2OTGHS);
+
+	LL_PWR_EnableUSBVoltageDetector();
+
+	/* Per AN2606: USBREGEN not supported when running in FS mode. */
+	LL_PWR_DisableUSBReg();
+	while (!LL_PWR_IsActiveFlag_USB()) {
+		LOG_INF("PWR not active yet");
+		k_sleep(K_MSEC(100));
+	}
+#endif
+
+	LOG_DBG("Pinctrl signals configuration");
+	status = stm32_dt_pinctrl_configure(usb_pinctrl,
+				     ARRAY_SIZE(usb_pinctrl),
+				     (uint32_t)usb_dc_stm32_state.pcd.Instance);
+	if (status < 0) {
+		LOG_ERR("USB pinctrl setup failed (%d)", status);
+		return status;
+	}
 
 	LOG_DBG("HAL_PCD_Init");
 	status = HAL_PCD_Init(&usb_dc_stm32_state.pcd);
@@ -397,7 +431,7 @@ static int usb_dc_stm32_init(void)
 	usb_dc_stm32_state.in_ep_state[EP0_IDX].ep_mps = EP0_MPS;
 	usb_dc_stm32_state.in_ep_state[EP0_IDX].ep_type = EP_TYPE_CTRL;
 
-#ifdef USB
+#if defined(USB) || defined(USB_DRD_FS)
 	/* Start PMA configuration for the endpoints after the BTABLE. */
 	usb_dc_stm32_state.pma_offset = USB_BTABLE_SIZE;
 
@@ -591,15 +625,15 @@ int usb_dc_ep_configure(const struct usb_dc_ep_cfg_data * const ep_cfg)
 	uint8_t ep = ep_cfg->ep_addr;
 	struct usb_dc_stm32_ep_state *ep_state = usb_dc_stm32_get_ep_state(ep);
 
-	LOG_DBG("ep 0x%02x, previous ep_mps %u, ep_mps %u, ep_type %u",
-		ep_cfg->ep_addr, ep_state->ep_mps, ep_cfg->ep_mps,
-		ep_cfg->ep_type);
-
 	if (!ep_state) {
 		return -EINVAL;
 	}
 
-#ifdef USB
+	LOG_DBG("ep 0x%02x, previous ep_mps %u, ep_mps %u, ep_type %u",
+		ep_cfg->ep_addr, ep_state->ep_mps, ep_cfg->ep_mps,
+		ep_cfg->ep_type);
+
+#if defined(USB) || defined(USB_DRD_FS)
 	if (ep_cfg->ep_mps > ep_state->ep_pma_buf_len) {
 		if (USB_RAM_SIZE <=
 		    (usb_dc_stm32_state.pma_offset + ep_cfg->ep_mps)) {
@@ -913,7 +947,9 @@ int usb_dc_detach(void)
 	LOG_ERR("Not implemented");
 
 #ifdef CONFIG_SOC_SERIES_STM32WBX
-	LL_HSEM_ReleaseLock(HSEM, CFG_HW_RCC_CRRCR_CCIPR_SEMID, 0);
+	/* Specially for STM32WB, unlock the HSEM when USB is no more used. */
+	z_stm32_hsem_unlock(CFG_HW_CLK48_CONFIG_SEMID);
+
 	/*
 	 * TODO: AN5289 notes a process of locking Sem0, with possible waits
 	 * via interrupts before switching off CLK48, but lacking any actual
@@ -1011,8 +1047,7 @@ void HAL_PCD_SetupStageCallback(PCD_HandleTypeDef *hpcd)
 		ep_state->cb(EP0_OUT, USB_DC_EP_SETUP);
 
 		if (!(setup->wLength == 0U) &&
-		    !(REQTYPE_GET_DIR(setup->bmRequestType) ==
-		    REQTYPE_DIR_TO_HOST)) {
+		    usb_reqtype_is_to_device(setup)) {
 			usb_dc_ep_start_read(EP0_OUT,
 					     usb_dc_stm32_state.ep_buf[EP0_IDX],
 					     setup->wLength);
@@ -1057,10 +1092,10 @@ void HAL_PCD_DataInStageCallback(PCD_HandleTypeDef *hpcd, uint8_t epnum)
 	}
 }
 
-#if defined(USB) && defined(CONFIG_USB_DC_STM32_DISCONN_ENABLE)
+#if (defined(USB) || defined(USB_DRD_FS)) && defined(CONFIG_USB_DC_STM32_DISCONN_ENABLE)
 void HAL_PCDEx_SetConnectionState(PCD_HandleTypeDef *hpcd, uint8_t state)
 {
-	struct device *usb_disconnect;
+	const struct device *usb_disconnect;
 
 	usb_disconnect = device_get_binding(
 				DT_GPIO_LABEL(DT_INST(0, st_stm32_usb), disconnect_gpios));

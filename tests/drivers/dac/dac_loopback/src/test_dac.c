@@ -27,7 +27,11 @@
  */
 
 #if defined(CONFIG_BOARD_NUCLEO_L073RZ) || \
-	defined(CONFIG_BOARD_NUCLEO_L152RE)
+	defined(CONFIG_BOARD_NUCLEO_L152RE) || \
+	defined(CONFIG_BOARD_STM32F3_DISCO) || \
+	defined(CONFIG_BOARD_STM32L562E_DK) || \
+	defined(CONFIG_BOARD_NUCLEO_L552ZE_Q) || \
+	defined(CONFIG_BOARD_RONOTH_LODEV)
 
 /*
  * DAC output on PA4 (Arduino A2 pin of Nucleo board)
@@ -40,6 +44,25 @@
 
 #define ADC_DEVICE_NAME		DT_LABEL(DT_NODELABEL(adc1))
 #define ADC_CHANNEL_ID		1
+#define ADC_RESOLUTION		12
+#define ADC_GAIN		ADC_GAIN_1
+#define ADC_REFERENCE		ADC_REF_INTERNAL
+#define ADC_ACQUISITION_TIME	ADC_ACQ_TIME_DEFAULT
+
+#elif defined(CONFIG_BOARD_NUCLEO_F207ZG) || \
+	defined(CONFIG_BOARD_NUCLEO_F429ZI) || \
+	defined(CONFIG_BOARD_NUCLEO_F746ZG)
+/*
+ * DAC output on PA4
+ * ADC input read from PA0
+ */
+
+#define DAC_DEVICE_NAME		DT_LABEL(DT_NODELABEL(dac1))
+#define DAC_CHANNEL_ID		1
+#define DAC_RESOLUTION		12
+
+#define ADC_DEVICE_NAME		DT_LABEL(DT_NODELABEL(adc1))
+#define ADC_CHANNEL_ID		0
 #define ADC_RESOLUTION		12
 #define ADC_GAIN		ADC_GAIN_1
 #define ADC_REFERENCE		ADC_REF_INTERNAL
@@ -78,6 +101,45 @@
 #define ADC_ACQUISITION_TIME	ADC_ACQ_TIME_DEFAULT
 #define ADC_CHANNEL_ID		23
 
+#elif defined(CONFIG_BOARD_FRDM_K22F)
+
+/* DAC0 output is internally available on ADC0_SE23 */
+
+#define DAC_DEVICE_NAME		DT_LABEL(DT_NODELABEL(dac0))
+#define DAC_RESOLUTION		12
+#define DAC_CHANNEL_ID		0
+
+#define ADC_DEVICE_NAME		DT_LABEL(DT_NODELABEL(adc0))
+#define ADC_RESOLUTION		12
+#define ADC_GAIN		ADC_GAIN_1
+#define ADC_REFERENCE		ADC_REF_INTERNAL
+#define ADC_ACQUISITION_TIME	ADC_ACQ_TIME_DEFAULT
+#define ADC_CHANNEL_ID		23
+
+#elif defined(CONFIG_BOARD_BL652_DVK) || \
+	defined(CONFIG_BOARD_BL653_DVK) || \
+	defined(CONFIG_BOARD_BL654_DVK)  || \
+	defined(CONFIG_BOARD_BL5340_DVK_CPUAPP)
+#include <hal/nrf_saadc.h>
+ /* DAC output from MCP4725 pin 1
+  * On BL65x ADC_1 input is read from pin SIO_3
+  * On BL5340 ADC_1 input is read from pin SIO_5
+  * Note external DAC MCP4725 is not populated on BL652_DVK, BL653_DVK and
+  * BL654_DVK at factory
+  */
+
+#define DAC_DEVICE_NAME		DT_LABEL(DT_NODELABEL(dac0))
+#define DAC_RESOLUTION		12
+#define DAC_CHANNEL_ID		0
+
+#define ADC_DEVICE_NAME		DT_LABEL(DT_NODELABEL(adc))
+#define ADC_RESOLUTION		12
+#define ADC_GAIN		ADC_GAIN_1_4
+#define ADC_REFERENCE		ADC_REF_VDD_1_4
+#define ADC_ACQUISITION_TIME	ADC_ACQ_TIME_DEFAULT
+#define ADC_CHANNEL_ID		1
+#define ADC_1ST_CHANNEL_INPUT	NRF_SAADC_INPUT_AIN1
+
 #else
 #error "Unsupported board."
 #endif
@@ -92,12 +154,19 @@ static const struct adc_channel_cfg adc_ch_cfg = {
 	.reference        = ADC_REFERENCE,
 	.acquisition_time = ADC_ACQUISITION_TIME,
 	.channel_id       = ADC_CHANNEL_ID,
+
+#if defined(CONFIG_BOARD_BL652_DVK) || \
+	defined(CONFIG_BOARD_BL653_DVK) || \
+	defined(CONFIG_BOARD_BL654_DVK) || \
+	defined(CONFIG_BOARD_BL5340_DVK_CPUAPP)
+	.input_positive   = ADC_1ST_CHANNEL_INPUT,
+#endif
 };
 
-static struct device *init_dac(void)
+static const struct device *init_dac(void)
 {
 	int ret;
-	struct device *dac_dev = device_get_binding(DAC_DEVICE_NAME);
+	const struct device *dac_dev = device_get_binding(DAC_DEVICE_NAME);
 
 	zassert_not_null(dac_dev, "Cannot get DAC device");
 
@@ -109,10 +178,10 @@ static struct device *init_dac(void)
 }
 
 /* ADC necessary to read back the value from DAC */
-static struct device *init_adc(void)
+static const struct device *init_adc(void)
 {
 	int ret;
-	struct device *adc_dev = device_get_binding(ADC_DEVICE_NAME);
+	const struct device *adc_dev = device_get_binding(ADC_DEVICE_NAME);
 
 	zassert_not_null(adc_dev, "Cannot get ADC device");
 
@@ -130,8 +199,8 @@ static int test_task_loopback(void)
 {
 	int ret;
 
-	struct device *dac_dev = init_dac();
-	struct device *adc_dev = init_adc();
+	const struct device *dac_dev = init_dac();
+	const struct device *adc_dev = init_adc();
 
 	if (!dac_dev || !adc_dev) {
 		return TC_FAIL;

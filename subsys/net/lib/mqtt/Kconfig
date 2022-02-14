@@ -6,7 +6,6 @@
 config MQTT_LIB
 	bool "Socket MQTT Library Support"
 	select NET_SOCKETS
-	select NET_SOCKETS_POSIX_NAMES
 	help
 	  Enable the Zephyr MQTT Library
 
@@ -34,6 +33,12 @@ config MQTT_LIB_WEBSOCKET
 	bool "Websocket support for socket MQTT Library"
 	help
 	  Enable Websocket support for socket MQTT Library.
+
+config MQTT_LIB_CUSTOM_TRANSPORT
+	bool "Custom transport support for socket MQTT Library"
+	help
+	  Enable custom transport support for socket MQTT Library.
+	  User must provide implementation for transport procedure.
 
 config MQTT_CLEAN_SESSION
 	bool "MQTT Clean Session Flag."

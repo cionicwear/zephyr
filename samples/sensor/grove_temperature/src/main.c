@@ -19,7 +19,9 @@
 
 void main(void)
 {
-	struct device *dev = device_get_binding(DT_LABEL(DT_INST(0, grove_temperature)));
+	const struct device *dev =
+		device_get_binding(DT_LABEL(DT_INST(0,
+						    seeed_grove_temperature)));
 	struct sensor_value temp;
 	int read;
 
@@ -28,7 +30,7 @@ void main(void)
 		return;
 	}
 #ifdef CONFIG_GROVE_LCD_RGB
-	struct device *glcd;
+	const struct device *glcd;
 
 	glcd = device_get_binding(GROVE_LCD_NAME);
 	if (glcd == NULL) {

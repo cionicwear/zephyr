@@ -26,13 +26,42 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 #define STM32L4X_PAGE_SHIFT	12
 #endif
 
+#if defined(FLASH_OPTR_DUALBANK) || defined(FLASH_OPTR_DBANK)
+#define CONTROL_DCACHE
+#endif
+
 /* offset and len must be aligned on 8 for write
  * , positive and not beyond end of flash */
-bool flash_stm32_valid_range(struct device *dev, off_t offset, uint32_t len,
+bool flash_stm32_valid_range(const struct device *dev, off_t offset,
+			     uint32_t len,
 			     bool write)
 {
 	return (!write || (offset % 8 == 0 && len % 8 == 0U)) &&
 		flash_stm32_range_exists(dev, offset, len);
+}
+
+static inline void flush_cache(FLASH_TypeDef *regs)
+{
+	if (regs->ACR & FLASH_ACR_DCEN) {
+		regs->ACR &= ~FLASH_ACR_DCEN;
+		/* Datasheet: DCRST: Data cache reset
+		 * This bit can be written only when thes data cache is disabled
+		 */
+		regs->ACR |= FLASH_ACR_DCRST;
+		regs->ACR &= ~FLASH_ACR_DCRST;
+		regs->ACR |= FLASH_ACR_DCEN;
+	}
+
+	if (regs->ACR & FLASH_ACR_ICEN) {
+		regs->ACR &= ~FLASH_ACR_ICEN;
+		/* Datasheet: ICRST: Instruction cache reset :
+		 * This bit can be written only when the instruction cache
+		 * is disabled
+		 */
+		regs->ACR |= FLASH_ACR_ICRST;
+		regs->ACR &= ~FLASH_ACR_ICRST;
+		regs->ACR |= FLASH_ACR_ICEN;
+	}
 }
 
 /*
@@ -45,13 +74,13 @@ static unsigned int get_page(off_t offset)
 	return offset >> STM32L4X_PAGE_SHIFT;
 }
 
-static int write_dword(struct device *dev, off_t offset, uint64_t val)
+static int write_dword(const struct device *dev, off_t offset, uint64_t val)
 {
 	volatile uint32_t *flash = (uint32_t *)(offset + CONFIG_FLASH_BASE_ADDRESS);
 	FLASH_TypeDef *regs = FLASH_STM32_REGS(dev);
-#if defined(FLASH_OPTR_DUALBANK) || defined(FLASH_OPTR_DBANK)
+#ifdef CONTROL_DCACHE
 	bool dcache_enabled = false;
-#endif /* FLASH_OPTR_DUALBANK || FLASH_OPTR_DBANK */
+#endif /* CONTROL_DCACHE */
 	uint32_t tmp;
 	int rc;
 
@@ -72,7 +101,7 @@ static int write_dword(struct device *dev, off_t offset, uint64_t val)
 		return -EIO;
 	}
 
-#if defined(FLASH_OPTR_DUALBANK) || defined(FLASH_OPTR_DBANK)
+#ifdef CONTROL_DCACHE
 	/*
 	 * Disable the data cache to avoid the silicon errata 2.2.3:
 	 * "Data cache might be corrupted during Flash memory read-while-write operation"
@@ -81,7 +110,7 @@ static int write_dword(struct device *dev, off_t offset, uint64_t val)
 		dcache_enabled = true;
 		regs->ACR &= (~FLASH_ACR_DCEN);
 	}
-#endif /* FLASH_OPTR_DUALBANK || FLASH_OPTR_DBANK */
+#endif /* CONTROL_DCACHE */
 
 	/* Set the PG bit */
 	regs->CR |= FLASH_CR_PG;
@@ -99,21 +128,21 @@ static int write_dword(struct device *dev, off_t offset, uint64_t val)
 	/* Clear the PG bit */
 	regs->CR &= (~FLASH_CR_PG);
 
-#if defined(FLASH_OPTR_DUALBANK) || defined(FLASH_OPTR_DBANK)
+#ifdef CONTROL_DCACHE
 	/* Reset/enable the data cache if previously enabled */
 	if (dcache_enabled) {
 		regs->ACR |= FLASH_ACR_DCRST;
 		regs->ACR &= (~FLASH_ACR_DCRST);
 		regs->ACR |= FLASH_ACR_DCEN;
 	}
-#endif /* FLASH_OPTR_DUALBANK || FLASH_OPTR_DBANK */
+#endif /* CONTROL_DCACHE */
 
 	return rc;
 }
 
 #define SOC_NV_FLASH_SIZE DT_REG_SIZE(DT_INST(0, soc_nv_flash))
 
-static int erase_page(struct device *dev, unsigned int page)
+static int erase_page(const struct device *dev, unsigned int page)
 {
 	FLASH_TypeDef *regs = FLASH_STM32_REGS(dev);
 	uint32_t tmp;
@@ -158,6 +187,8 @@ static int erase_page(struct device *dev, unsigned int page)
 		return rc;
 	}
 
+	flush_cache(regs);
+
 	/* Set the PER bit and select the page you wish to erase */
 	regs->CR |= FLASH_CR_PER;
 #ifdef FLASH_CR_BKER
@@ -183,7 +214,8 @@ static int erase_page(struct device *dev, unsigned int page)
 	return rc;
 }
 
-int flash_stm32_block_erase_loop(struct device *dev, unsigned int offset,
+int flash_stm32_block_erase_loop(const struct device *dev,
+				 unsigned int offset,
 				 unsigned int len)
 {
 	int i, rc = 0;
@@ -199,7 +231,7 @@ int flash_stm32_block_erase_loop(struct device *dev, unsigned int offset,
 	return rc;
 }
 
-int flash_stm32_write_range(struct device *dev, unsigned int offset,
+int flash_stm32_write_range(const struct device *dev, unsigned int offset,
 			    const void *data, unsigned int len)
 {
 	int i, rc = 0;
@@ -215,7 +247,7 @@ int flash_stm32_write_range(struct device *dev, unsigned int offset,
 	return rc;
 }
 
-void flash_stm32_page_layout(struct device *dev,
+void flash_stm32_page_layout(const struct device *dev,
 			     const struct flash_pages_layout **layout,
 			     size_t *layout_size)
 {

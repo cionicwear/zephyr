@@ -51,12 +51,6 @@ Application sleep time:
 
 	#define APP_SLEEP_MSECS		500
 
-Application RX and TX timeout:
-
-.. code-block:: c
-
-	#define APP_TX_RX_TIMEOUT       300
-
 Max number of connection tries:
 
 .. code-block:: c
@@ -129,7 +123,7 @@ try this sample with TLS enabled, by following these steps:
   https://test.mosquitto.org
 - In :file:`src/test_certs.h`, set ``ca_certificate[]`` using the certificate
   contents (or set it to its filename if the socket offloading feature is
-  enabled on your platform and :option:`CONFIG_TLS_CREDENTIAL_FILENAMES` is
+  enabled on your platform and :kconfig:`CONFIG_TLS_CREDENTIAL_FILENAMES` is
   set to ``y``).
 - In :file:`src/config.h`, set SERVER_ADDR to the IP address to connect to,
   i.e., the IP address of test.mosquitto.org ``"37.187.106.16"``

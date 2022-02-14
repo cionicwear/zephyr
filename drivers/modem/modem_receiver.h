@@ -22,7 +22,7 @@ extern "C" {
 #endif
 
 struct mdm_receiver_context {
-	struct device *uart_dev;
+	const struct device *uart_dev;
 
 	/* rx data */
 	struct ring_buf rx_rb;
@@ -32,7 +32,11 @@ struct mdm_receiver_context {
 	char *data_manufacturer;
 	char *data_model;
 	char *data_revision;
+#if defined(CONFIG_MODEM_SIM_NUMBERS)
 	char *data_imei;
+	char *data_imsi;
+#endif
+	char *data_iccid;
 	int   data_rssi;
 };
 
@@ -76,14 +80,14 @@ int mdm_receiver_send(struct mdm_receiver_context *ctx,
  * @note   Acquires receivers device, and prepares the context to be used.
  *
  * @param  *ctx: receiver context to register.
- * @param  *uart_dev_name: communication device for the receiver context.
+ * @param  *uart_dev: communication device for the receiver context.
  * @param  *buf: rx buffer to use for received data.
  * @param  size: rx buffer size.
  *
  * @retval 0 if ok, < 0 if error.
  */
 int mdm_receiver_register(struct mdm_receiver_context *ctx,
-			  const char *uart_dev_name,
+			  const struct device *uart_dev,
 			  uint8_t *buf, size_t size);
 
 int mdm_receiver_sleep(struct mdm_receiver_context *ctx);

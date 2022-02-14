@@ -26,7 +26,7 @@ static uint16_t default_conn_handle;
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL, 0x0d, 0x18),
+	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_HRS_VAL)),
 };
 
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
@@ -34,7 +34,7 @@ static const struct bt_data ad[] = {
 #define DEVICE_BEACON_TXPOWER_NUM  8
 
 static struct k_thread pwr_thread_data;
-static K_THREAD_STACK_DEFINE(pwr_thread_stack, 320);
+static K_THREAD_STACK_DEFINE(pwr_thread_stack, 512);
 
 static const int8_t txp[DEVICE_BEACON_TXPOWER_NUM] = {4, 0, -3, -8,
 						    -15, -18, -23, -30};
@@ -190,7 +190,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	}
 }
 
-static struct bt_conn_cb conn_callbacks = {
+BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
 };
@@ -225,7 +225,7 @@ static void hrs_notify(void)
 		heartrate = 90U;
 	}
 
-	bt_gatt_hrs_notify(heartrate);
+	bt_hrs_notify(heartrate);
 }
 
 void modulate_tx_power(void *p1, void *p2, void *p3)
@@ -294,8 +294,6 @@ void main(void)
 	printk("Get Tx power level ->");
 	get_tx_power(BT_HCI_VS_LL_HANDLE_TYPE_ADV, 0, &txp_get);
 	printk("-> default TXP = %d\n", txp_get);
-
-	bt_conn_cb_register(&conn_callbacks);
 
 	/* Wait for 5 seconds to give a chance users/testers
 	 * to check that default Tx power is indeed the one

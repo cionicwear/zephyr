@@ -24,11 +24,11 @@ struct mcux_dac_data {
 	bool configured;
 };
 
-static int mcux_dac_channel_setup(struct device *dev,
+static int mcux_dac_channel_setup(const struct device *dev,
 				    const struct dac_channel_cfg *channel_cfg)
 {
-	const struct mcux_dac_config *config = dev->config_info;
-	struct mcux_dac_data *data = dev->driver_data;
+	const struct mcux_dac_config *config = dev->config;
+	struct mcux_dac_data *data = dev->data;
 	dac_config_t dac_config;
 
 	if (channel_cfg->channel_id != 0) {
@@ -52,10 +52,11 @@ static int mcux_dac_channel_setup(struct device *dev,
 	return 0;
 }
 
-static int mcux_dac_write_value(struct device *dev, uint8_t channel, uint32_t value)
+static int mcux_dac_write_value(const struct device *dev, uint8_t channel,
+				uint32_t value)
 {
-	const struct mcux_dac_config *config = dev->config_info;
-	struct mcux_dac_data *data = dev->driver_data;
+	const struct mcux_dac_config *config = dev->config;
+	struct mcux_dac_data *data = dev->data;
 
 	if (!data->configured) {
 		LOG_ERR("channel not initialized");
@@ -81,7 +82,7 @@ static int mcux_dac_write_value(struct device *dev, uint8_t channel, uint32_t va
 	return 0;
 }
 
-static int mcux_dac_init(struct device *dev)
+static int mcux_dac_init(const struct device *dev)
 {
 	return 0;
 }
@@ -104,8 +105,8 @@ static const struct dac_driver_api mcux_dac_driver_api = {
 		.low_power = DT_INST_PROP(n, low_power_mode),		\
 	};								\
 									\
-	DEVICE_AND_API_INIT(mcux_dac_##n, DT_INST_LABEL(n),		\
-			mcux_dac_init, &mcux_dac_data_##n,		\
+	DEVICE_DT_INST_DEFINE(n, mcux_dac_init, NULL,			\
+			&mcux_dac_data_##n,				\
 			&mcux_dac_config_##n,				\
 			POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,\
 			&mcux_dac_driver_api);

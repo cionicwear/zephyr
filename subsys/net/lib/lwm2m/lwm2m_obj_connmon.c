@@ -18,6 +18,9 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include "lwm2m_object.h"
 #include "lwm2m_engine.h"
 
+#define CONNMON_VERSION_MAJOR 1
+#define CONNMON_VERSION_MINOR 0
+
 /* Connectivity Monitoring resource IDs */
 #define CONNMON_NETWORK_BEARER_ID		0
 #define CONNMON_AVAIL_NETWORK_BEARER_ID		1
@@ -141,13 +144,16 @@ static struct lwm2m_engine_obj_inst *connmon_create(uint16_t obj_inst_id)
 	return &inst;
 }
 
-static int lwm2m_connmon_init(struct device *dev)
+static int lwm2m_connmon_init(const struct device *dev)
 {
 	struct lwm2m_engine_obj_inst *obj_inst = NULL;
 	int ret = 0;
 
 	/* initialize the Connection Monitoring field data */
 	connmon.obj_id = LWM2M_OBJECT_CONNECTIVITY_MONITORING_ID;
+	connmon.version_major = CONNMON_VERSION_MAJOR;
+	connmon.version_minor = CONNMON_VERSION_MINOR;
+	connmon.is_core = true;
 	connmon.fields = fields;
 	connmon.field_count = ARRAY_SIZE(fields);
 	connmon.max_instance_count = 1U;

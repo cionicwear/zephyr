@@ -115,6 +115,12 @@ The Zephyr nucleo_g431rb board configuration supports the following hardware fea
 +-----------+------------+-------------------------------------+
 | PWM       | on-chip    | pwm                                 |
 +-----------+------------+-------------------------------------+
+| DAC       | on-chip    | dac                                 |
++-----------+------------+-------------------------------------+
+| COUNTER   | on-chip    | rtc                                 |
++-----------+------------+-------------------------------------+
+| SPI       | on-chip    | spi                                 |
++-----------+------------+-------------------------------------+
 
 Other hardware features are not yet supported on this Zephyr port.
 
@@ -142,7 +148,7 @@ Default Zephyr Peripheral Mapping:
 - I2C_1_SCL : PB8
 - I2C_1_SDA : PB9
 - SPI_1_NSS : PB6
-- SPI_1_SCK : PB3
+- SPI_1_SCK : PA5
 - SPI_1_MISO : PA6
 - SPI_1_MOSI : PA7
 - SPI_2_NSS : PB12
@@ -156,8 +162,7 @@ Default Zephyr Peripheral Mapping:
 - PWM_3_CH1 : PB4
 - USER_PB : PC13
 - LD2 : PA5
-- USB DM : PA11
-- USB DP : PA12
+- DAC1_OUT1 : PA4
 
 System Clock
 ------------
@@ -195,6 +200,7 @@ the following pyocd command:
 
 .. code-block:: console
 
+   $ pyocd pack --update
    $ pyocd pack --install stm32g431rb
 
 Note:

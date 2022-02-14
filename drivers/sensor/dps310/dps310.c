@@ -228,7 +228,7 @@ struct dps310_cal_coeff {
 };
 
 struct dps310_data {
-	struct device *i2c_master;
+	const struct device *i2c_master;
 	struct dps310_cal_coeff comp;
 	/* Temperature Values */
 	int32_t tmp_val1;
@@ -524,7 +524,7 @@ static bool dps310_measure_psr(struct dps310_data *data,
 
 	/* read pressure raw values in one continuous read */
 	int res = i2c_write_read(data->i2c_master, config->i2c_addr,
-				 &REG_ADDR_TMP_B2, 1, &value_raw,
+				 &REG_ADDR_PSR_B2, 1, &value_raw,
 				 sizeof(value_raw));
 	if (res < 0) {
 		LOG_WRN("I2C error: %d", res);
@@ -553,7 +553,7 @@ static bool dps310_measure_tmp(struct dps310_data *data,
 
 	/* read temperature raw values in one continuous read */
 	int res = i2c_write_read(data->i2c_master, config->i2c_addr,
-				 &REG_ADDR_PSR_B2, 1, &value_raw,
+				 &REG_ADDR_TMP_B2, 1, &value_raw,
 				 sizeof(value_raw));
 	if (res < 0) {
 		LOG_WRN("I2C error: %d", res);
@@ -569,10 +569,10 @@ static bool dps310_measure_tmp(struct dps310_data *data,
 }
 
 /* Initialize the sensor and apply the configuration */
-static int dps310_init(struct device *dev)
+static int dps310_init(const struct device *dev)
 {
-	struct dps310_data *data = dev->driver_data;
-	const struct dps310_cfg *config = dev->config_info;
+	struct dps310_data *data = dev->data;
+	const struct dps310_cfg *config = dev->config;
 
 	data->i2c_master = device_get_binding(config->i2c_bus_name);
 	if (data->i2c_master == NULL) {
@@ -625,7 +625,7 @@ static int dps310_init(struct device *dev)
 	uint8_t tmp_coef_srce = 0;
 
 	res = i2c_write_read(data->i2c_master, config->i2c_addr,
-			     &REG_ADDR_COEF_SRCE, 1, &tmp_coef_srce, 18);
+			     &REG_ADDR_COEF_SRCE, 1, &tmp_coef_srce, sizeof(tmp_coef_srce));
 	if (res < 0) {
 		LOG_WRN("I2C error: %d", res);
 		return -EIO;
@@ -661,10 +661,11 @@ static int dps310_init(struct device *dev)
 }
 
 /* Do a measurement and fetch the data from the sensor */
-static int dps310_sample_fetch(struct device *dev, enum sensor_channel chan)
+static int dps310_sample_fetch(const struct device *dev,
+			       enum sensor_channel chan)
 {
-	struct dps310_data *data = dev->driver_data;
-	const struct dps310_cfg *config = dev->config_info;
+	struct dps310_data *data = dev->data;
+	const struct dps310_cfg *config = dev->config;
 
 	LOG_DBG("Fetching sample from DPS310");
 
@@ -695,10 +696,11 @@ static int dps310_sample_fetch(struct device *dev, enum sensor_channel chan)
 }
 
 /* Get the measurement data */
-static int dps310_channel_get(struct device *dev, enum sensor_channel chan,
+static int dps310_channel_get(const struct device *dev,
+			      enum sensor_channel chan,
 			      struct sensor_value *val)
 {
-	struct dps310_data *data = dev->driver_data;
+	struct dps310_data *data = dev->data;
 
 	switch (chan) {
 	case SENSOR_CHAN_AMBIENT_TEMP:
@@ -730,7 +732,7 @@ static const struct dps310_cfg dps310_cfg_0 = {
 	.i2c_addr = DT_INST_REG_ADDR(0)
 };
 
-DEVICE_AND_API_INIT(dps310, DT_INST_LABEL(0), dps310_init,
+DEVICE_DT_INST_DEFINE(0, dps310_init, NULL,
 		    &dps310_data_0, &dps310_cfg_0, POST_KERNEL,
 		    CONFIG_SENSOR_INIT_PRIORITY, &dps310_api_funcs);
 #endif
@@ -742,7 +744,7 @@ static const struct dps310_cfg dps310_cfg_1 = {
 	.i2c_addr = DT_INST_REG_ADDR(1)
 };
 
-DEVICE_AND_API_INIT(dps310, DT_INST_LABEL(1), dps310_init,
+DEVICE_DT_INST_DEFINE(1, dps310_init, NULL,
 		    &dps310_data_1, &dps310_cfg_1, POST_KERNEL,
 		    CONFIG_SENSOR_INIT_PRIORITY, &dps310_api_funcs);
 #endif

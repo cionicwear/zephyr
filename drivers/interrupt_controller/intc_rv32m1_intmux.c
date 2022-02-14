@@ -40,23 +40,21 @@
 
 struct rv32m1_intmux_config {
 	INTMUX_Type *regs;
-	char *clock_name;
+	const struct device *clock_dev;
 	clock_control_subsys_t clock_subsys;
 	struct _isr_table_entry *isr_base;
 };
 
 #define DEV_CFG(dev) \
-	((struct rv32m1_intmux_config *)(dev->config_info))
+	((struct rv32m1_intmux_config *)(dev->config))
 
 #define DEV_REGS(dev) (DEV_CFG(dev)->regs)
-
-DEVICE_DECLARE(intmux);
 
 /*
  * <irq_nextlevel.h> API
  */
 
-static void rv32m1_intmux_irq_enable(struct device *dev, uint32_t irq)
+static void rv32m1_intmux_irq_enable(const struct device *dev, uint32_t irq)
 {
 	INTMUX_Type *regs = DEV_REGS(dev);
 	uint32_t channel = rv32m1_intmux_channel(irq);
@@ -65,7 +63,7 @@ static void rv32m1_intmux_irq_enable(struct device *dev, uint32_t irq)
 	regs->CHANNEL[channel].CHn_IER_31_0 |= BIT(line);
 }
 
-static void rv32m1_intmux_irq_disable(struct device *dev, uint32_t irq)
+static void rv32m1_intmux_irq_disable(const struct device *dev, uint32_t irq)
 {
 	INTMUX_Type *regs = DEV_REGS(dev);
 	uint32_t channel = rv32m1_intmux_channel(irq);
@@ -74,7 +72,7 @@ static void rv32m1_intmux_irq_disable(struct device *dev, uint32_t irq)
 	regs->CHANNEL[channel].CHn_IER_31_0 &= ~BIT(line);
 }
 
-static uint32_t rv32m1_intmux_get_state(struct device *dev)
+static uint32_t rv32m1_intmux_get_state(const struct device *dev)
 {
 	INTMUX_Type *regs = DEV_REGS(dev);
 	size_t i;
@@ -88,7 +86,8 @@ static uint32_t rv32m1_intmux_get_state(struct device *dev)
 	return 0;
 }
 
-static int rv32m1_intmux_get_line_state(struct device *dev, unsigned int irq)
+static int rv32m1_intmux_get_line_state(const struct device *dev,
+					unsigned int irq)
 {
 	INTMUX_Type *regs = DEV_REGS(dev);
 	uint32_t channel = rv32m1_intmux_channel(irq);
@@ -108,9 +107,9 @@ static int rv32m1_intmux_get_line_state(struct device *dev, unsigned int irq)
 #define ISR_ENTRY(channel, line) \
 	((channel) * CONFIG_MAX_IRQ_PER_AGGREGATOR + line)
 
-static void rv32m1_intmux_isr(void *arg)
+static void rv32m1_intmux_isr(const void *arg)
 {
-	struct device *dev = DEVICE_GET(intmux);
+	const struct device *dev = DEVICE_DT_INST_GET(0);
 	INTMUX_Type *regs = DEV_REGS(dev);
 	uint32_t channel = POINTER_TO_UINT(arg);
 	uint32_t line = (regs->CHANNEL[channel].CHn_VEC >> 2);
@@ -146,24 +145,19 @@ static const struct irq_next_level_api rv32m1_intmux_apis = {
 
 static const struct rv32m1_intmux_config rv32m1_intmux_cfg = {
 	.regs = (INTMUX_Type *)DT_INST_REG_ADDR(0),
-	.clock_name = DT_INST_CLOCKS_LABEL(0),
+	.clock_dev = DEVICE_DT_GET(DT_INST_CLOCKS_CTLR(0)),
 	.clock_subsys = UINT_TO_POINTER(DT_INST_CLOCKS_CELL(0, name)),
 	.isr_base = &_sw_isr_table[CONFIG_2ND_LVL_ISR_TBL_OFFSET],
 };
 
-static int rv32m1_intmux_init(struct device *dev)
+static int rv32m1_intmux_init(const struct device *dev)
 {
 	const struct rv32m1_intmux_config *config = DEV_CFG(dev);
 	INTMUX_Type *regs = DEV_REGS(dev);
-	struct device *clock_dev = device_get_binding(config->clock_name);
 	size_t i;
 
-	if (!clock_dev) {
-		return -ENODEV;
-	}
-
 	/* Enable INTMUX clock. */
-	clock_control_on(clock_dev, config->clock_subsys);
+	clock_control_on(config->clock_dev, config->clock_subsys);
 
 	/*
 	 * Reset all channels, not just the ones we're configured to
@@ -219,7 +213,6 @@ static int rv32m1_intmux_init(struct device *dev)
 	return 0;
 }
 
-DEVICE_AND_API_INIT(intmux, DT_INST_LABEL(0),
-		    &rv32m1_intmux_init, NULL,
+DEVICE_DT_INST_DEFINE(0, &rv32m1_intmux_init, NULL, NULL,
 		    &rv32m1_intmux_cfg, PRE_KERNEL_1,
 		    CONFIG_RV32M1_INTMUX_INIT_PRIORITY, &rv32m1_intmux_apis);

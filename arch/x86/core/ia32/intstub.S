@@ -31,10 +31,9 @@
 
 	GTEXT(arch_swap)
 
-#ifdef CONFIG_SYS_POWER_MANAGEMENT
-	GTEXT(z_sys_power_save_idle_exit)
+#ifdef CONFIG_PM
+	GTEXT(z_pm_save_idle_exit)
 #endif
-
 
 /**
  *
@@ -63,7 +62,7 @@
  *
  * void _interrupt_enter(void *isr, void *isr_param);
  */
-SECTION_FUNC(TEXT, _interrupt_enter)
+SECTION_FUNC(PINNED_TEXT, _interrupt_enter)
 	/*
 	 * Note that the processor has pushed both the EFLAGS register
 	 * and the logical return address (cs:eip) onto the stack prior
@@ -79,15 +78,6 @@ SECTION_FUNC(TEXT, _interrupt_enter)
 	 *  0  isr   <-- stack pointer
 	 */
 
-#ifdef CONFIG_EXECUTION_BENCHMARKING
-	pushl %eax
-	pushl %edx
-	rdtsc
-	mov %eax, arch_timing_irq_start
-	mov %edx, arch_timing_irq_start+4
-	pop %edx
-	pop %eax
-#endif
 	/*
 	 * The gen_idt tool creates an interrupt-gate descriptor for
 	 * all connections.  The processor will automatically clear the IF
@@ -129,19 +119,6 @@ SECTION_FUNC(TEXT, _interrupt_enter)
 	 */
 	pushl	%edi
 
-
-#if defined(CONFIG_TRACING_ISR)
-
-	/* Save these as we are using to keep track of isr and isr_param */
-	pushl	%eax
-	pushl	%edx
-
-	call	sys_trace_isr_enter
-
-	popl	%edx
-	popl	%eax
-#endif
-
 	/* load %ecx with &_kernel */
 
 	movl	$_kernel, %ecx
@@ -167,11 +144,11 @@ SECTION_FUNC(TEXT, _interrupt_enter)
 
 	pushl	%edi			/* Save stack pointer */
 
-#ifdef CONFIG_SYS_POWER_MANAGEMENT
+#ifdef CONFIG_PM
 	cmpl	$0, _kernel_offset_to_idle(%ecx)
 	jne	handle_idle
 	/* fast path is !idle, in the pipeline */
-#endif /* CONFIG_SYS_POWER_MANAGEMENT */
+#endif /* CONFIG_PM */
 
 	/* fall through to nested case */
 
@@ -179,17 +156,13 @@ alreadyOnIntStack:
 
 	push	%eax	/* interrupt handler argument */
 
-#ifdef CONFIG_EXECUTION_BENCHMARKING
-	/* Save the eax and edx registers before reading the time stamp
-	* once done pop the values
-	*/
-	pushl %eax
-	pushl %edx
-	rdtsc
-	mov %eax,arch_timing_irq_end
-	mov %edx,arch_timing_irq_end+4
-	pop %edx
-	pop %eax
+#if defined(CONFIG_TRACING_ISR)
+	/* Save these as we are using to keep track of isr and isr_param */
+	pushl	%eax
+	pushl	%edx
+	call	sys_trace_isr_enter
+	popl	%edx
+	popl	%eax
 #endif
 
 #ifdef CONFIG_NESTED_INTERRUPTS
@@ -201,6 +174,12 @@ alreadyOnIntStack:
 	addl	$0x4, %esp
 #ifdef CONFIG_NESTED_INTERRUPTS
 	cli			/* disable interrupts again */
+#endif
+
+#if defined(CONFIG_TRACING_ISR)
+	pushl	%eax
+	call	sys_trace_isr_exit
+	popl	%eax
 #endif
 
 	xorl	%eax, %eax
@@ -221,7 +200,6 @@ alreadyOnIntStack:
 	movl	$_kernel, %ecx
 	decl	_kernel_offset_to_nested(%ecx)	/* dec interrupt nest count */
 	jne	nestedInterrupt                 /* 'iret' if nested case */
-
 
 #ifdef CONFIG_PREEMPT_ENABLED
 	movl	_kernel_offset_to_current(%ecx), %edx
@@ -319,29 +297,29 @@ nestedInterrupt:
 	KPTI_IRET
 
 
-#ifdef CONFIG_SYS_POWER_MANAGEMENT
+#ifdef CONFIG_PM
 handle_idle:
 	pushl	%eax
 	pushl	%edx
-	/* Populate 'ticks' argument to z_sys_power_save_idle_exit */
+	/* Populate 'ticks' argument to z_pm_save_idle_exit */
 	push	_kernel_offset_to_idle(%ecx)
 	/* Zero out _kernel.idle */
 	movl	$0, _kernel_offset_to_idle(%ecx)
 
 	/*
-	 * Beware that a timer driver's z_sys_power_save_idle_exit() implementation might
+	 * Beware that a timer driver's z_pm_save_idle_exit() implementation might
 	 * expect that interrupts are disabled when invoked.  This ensures that
 	 * the calculation and programming of the device for the next timer
 	 * deadline is not interrupted.
 	 */
 
-	call	z_sys_power_save_idle_exit
+	call	z_pm_save_idle_exit
 	/* discard 'ticks' argument passed on the stack */
 	add	$0x4, %esp
 	popl	%edx
 	popl	%eax
 	jmp	alreadyOnIntStack
-#endif /* CONFIG_SYS_POWER_MANAGEMENT */
+#endif /* CONFIG_PM */
 
 /**
  *
@@ -371,14 +349,14 @@ handle_idle:
  * thus z_SpuriousIntNoErrCodeHandler()/z_SpuriousIntHandler() shall be
  * invoked with interrupts disabled.
  */
-SECTION_FUNC(TEXT, z_SpuriousIntNoErrCodeHandler)
+SECTION_FUNC(PINNED_TEXT, z_SpuriousIntNoErrCodeHandler)
 
 	pushl	$0			/* push dummy err code onto stk */
 
 	/* fall through to z_SpuriousIntHandler */
 
 
-SECTION_FUNC(TEXT, z_SpuriousIntHandler)
+SECTION_FUNC(PINNED_TEXT, z_SpuriousIntHandler)
 
 	cld				/* Clear direction flag */
 
@@ -406,7 +384,7 @@ SECTION_FUNC(TEXT, z_SpuriousIntHandler)
 	/* handler doesn't  return */
 
 #if CONFIG_IRQ_OFFLOAD
-SECTION_FUNC(TEXT, _irq_sw_handler)
+SECTION_FUNC(PINNED_TEXT, _irq_sw_handler)
 	push $0
 	push $z_irq_do_offload
 	jmp _interrupt_enter

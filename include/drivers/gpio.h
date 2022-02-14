@@ -127,6 +127,13 @@ extern "C" {
  */
 #define GPIO_INT_HIGH_1                (1U << 18)
 
+#define GPIO_INT_MASK                  (GPIO_INT_DISABLE | \
+					GPIO_INT_ENABLE | \
+					GPIO_INT_LEVELS_LOGICAL | \
+					GPIO_INT_EDGE | \
+					GPIO_INT_LOW_0 | \
+					GPIO_INT_HIGH_1)
+
 /** @endcond */
 
 /** Configures GPIO interrupt to be triggered on pin rising edge and enables it.
@@ -305,13 +312,164 @@ typedef uint8_t gpio_dt_flags_t;
 typedef uint32_t gpio_flags_t;
 
 /**
+ * @brief Provides a type to hold GPIO information specified in devicetree
+ *
+ * This type is sufficient to hold a GPIO device pointer, pin number,
+ * and the subset of the flags used to control GPIO configuration
+ * which may be given in devicetree.
+ */
+struct gpio_dt_spec {
+	const struct device *port;
+	gpio_pin_t pin;
+	gpio_dt_flags_t dt_flags;
+};
+
+/**
+ * @brief Static initializer for a @p gpio_dt_spec
+ *
+ * This returns a static initializer for a @p gpio_dt_spec structure given a
+ * devicetree node identifier, a property specifying a GPIO and an index.
+ *
+ * Example devicetree fragment:
+ *
+ *	n: node {
+ *		foo-gpios = <&gpio0 1 GPIO_ACTIVE_LOW>,
+ *			    <&gpio1 2 GPIO_ACTIVE_LOW>;
+ *	}
+ *
+ * Example usage:
+ *
+ *	const struct gpio_dt_spec spec = GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(n),
+ *								 foo_gpios, 1);
+ *	// Initializes 'spec' to:
+ *	// {
+ *	//         .port = DEVICE_DT_GET(DT_NODELABEL(gpio1)),
+ *	//         .pin = 2,
+ *	//         .dt_flags = GPIO_ACTIVE_LOW
+ *	// }
+ *
+ * The 'gpio' field must still be checked for readiness, e.g. using
+ * device_is_ready(). It is an error to use this macro unless the node
+ * exists, has the given property, and that property specifies a GPIO
+ * controller, pin number, and flags as shown above.
+ *
+ * @param node_id devicetree node identifier
+ * @param prop lowercase-and-underscores property name
+ * @param idx logical index into "prop"
+ * @return static initializer for a struct gpio_dt_spec for the property
+ */
+#define GPIO_DT_SPEC_GET_BY_IDX(node_id, prop, idx)			       \
+	{								       \
+		.port = DEVICE_DT_GET(DT_GPIO_CTLR_BY_IDX(node_id, prop, idx)),\
+		.pin = DT_GPIO_PIN_BY_IDX(node_id, prop, idx),		       \
+		.dt_flags = DT_GPIO_FLAGS_BY_IDX(node_id, prop, idx),	       \
+	}
+
+/**
+ * @brief Like GPIO_DT_SPEC_GET_BY_IDX(), with a fallback to a default value
+ *
+ * If the devicetree node identifier 'node_id' refers to a node with a
+ * property 'prop', this expands to
+ * <tt>GPIO_DT_SPEC_GET_BY_IDX(node_id, prop, idx)</tt>. The @p
+ * default_value parameter is not expanded in this case.
+ *
+ * Otherwise, this expands to @p default_value.
+ *
+ * @param node_id devicetree node identifier
+ * @param prop lowercase-and-underscores property name
+ * @param idx logical index into "prop"
+ * @param default_value fallback value to expand to
+ * @return static initializer for a struct gpio_dt_spec for the property,
+ *         or default_value if the node or property do not exist
+ */
+#define GPIO_DT_SPEC_GET_BY_IDX_OR(node_id, prop, idx, default_value)	\
+	COND_CODE_1(DT_NODE_HAS_PROP(node_id, prop),			\
+		    (GPIO_DT_SPEC_GET_BY_IDX(node_id, prop, idx)),	\
+		    (default_value))
+
+/**
+ * @brief Equivalent to GPIO_DT_SPEC_GET_BY_IDX(node_id, prop, 0).
+ *
+ * @param node_id devicetree node identifier
+ * @param prop lowercase-and-underscores property name
+ * @return static initializer for a struct gpio_dt_spec for the property
+ * @see GPIO_DT_SPEC_GET_BY_IDX()
+ */
+#define GPIO_DT_SPEC_GET(node_id, prop) \
+	GPIO_DT_SPEC_GET_BY_IDX(node_id, prop, 0)
+
+/**
+ * @brief Equivalent to
+ *        GPIO_DT_SPEC_GET_BY_IDX_OR(node_id, prop, 0, default_value).
+ *
+ * @param node_id devicetree node identifier
+ * @param prop lowercase-and-underscores property name
+ * @param default_value fallback value to expand to
+ * @return static initializer for a struct gpio_dt_spec for the property
+ * @see GPIO_DT_SPEC_GET_BY_IDX_OR()
+ */
+#define GPIO_DT_SPEC_GET_OR(node_id, prop, default_value) \
+	GPIO_DT_SPEC_GET_BY_IDX_OR(node_id, prop, 0, default_value)
+
+/**
+ * @brief Static initializer for a @p gpio_dt_spec from a DT_DRV_COMPAT
+ * instance's GPIO property at an index.
+ *
+ * @param inst DT_DRV_COMPAT instance number
+ * @param prop lowercase-and-underscores property name
+ * @param idx logical index into "prop"
+ * @return static initializer for a struct gpio_dt_spec for the property
+ * @see GPIO_DT_SPEC_GET_BY_IDX()
+ */
+#define GPIO_DT_SPEC_INST_GET_BY_IDX(inst, prop, idx) \
+	GPIO_DT_SPEC_GET_BY_IDX(DT_DRV_INST(inst), prop, idx)
+
+/**
+ * @brief Static initializer for a @p gpio_dt_spec from a DT_DRV_COMPAT
+ *        instance's GPIO property at an index, with fallback
+ *
+ * @param inst DT_DRV_COMPAT instance number
+ * @param prop lowercase-and-underscores property name
+ * @param idx logical index into "prop"
+ * @param default_value fallback value to expand to
+ * @return static initializer for a struct gpio_dt_spec for the property
+ * @see GPIO_DT_SPEC_GET_BY_IDX()
+ */
+#define GPIO_DT_SPEC_INST_GET_BY_IDX_OR(inst, prop, idx, default_value)	\
+	GPIO_DT_SPEC_GET_BY_IDX_OR(DT_DRV_INST(inst), prop, idx, default_value)
+
+/**
+ * @brief Equivalent to GPIO_DT_SPEC_INST_GET_BY_IDX(inst, prop, 0).
+ *
+ * @param inst DT_DRV_COMPAT instance number
+ * @param prop lowercase-and-underscores property name
+ * @return static initializer for a struct gpio_dt_spec for the property
+ * @see GPIO_DT_SPEC_INST_GET_BY_IDX()
+ */
+#define GPIO_DT_SPEC_INST_GET(inst, prop) \
+	GPIO_DT_SPEC_INST_GET_BY_IDX(inst, prop, 0)
+
+/**
+ * @brief Equivalent to
+ *        GPIO_DT_SPEC_INST_GET_BY_IDX_OR(inst, prop, 0, default_value).
+ *
+ * @param inst DT_DRV_COMPAT instance number
+ * @param prop lowercase-and-underscores property name
+ * @param default_value fallback value to expand to
+ * @return static initializer for a struct gpio_dt_spec for the property
+ * @see GPIO_DT_SPEC_INST_GET_BY_IDX()
+ */
+#define GPIO_DT_SPEC_INST_GET_OR(inst, prop, default_value) \
+	GPIO_DT_SPEC_INST_GET_BY_IDX_OR(inst, prop, 0, default_value)
+
+/**
  * @brief Maximum number of pins that are supported by `gpio_port_pins_t`.
  */
 #define GPIO_MAX_PINS_PER_PORT (sizeof(gpio_port_pins_t) * __CHAR_BIT__)
 
 /**
  * This structure is common to all GPIO drivers and is expected to be
- * the first element in the object pointed to by the config_info field
+ * the first element in the object pointed to by the config field
  * in the device structure.
  */
 struct gpio_driver_config {
@@ -350,7 +508,7 @@ struct gpio_callback;
  * CONTAINER_OF() if original struct gpio_callback is stored in
  * another private structure.
  */
-typedef void (*gpio_callback_handler_t)(struct device *port,
+typedef void (*gpio_callback_handler_t)(const struct device *port,
 					struct gpio_callback *cb,
 					gpio_port_pins_t pins);
 
@@ -410,31 +568,27 @@ enum gpio_int_trig {
 };
 
 __subsystem struct gpio_driver_api {
-	int (*pin_configure)(struct device *port, gpio_pin_t pin, gpio_flags_t flags);
-	int (*port_get_raw)(struct device *port, gpio_port_value_t *value);
-	int (*port_set_masked_raw)(struct device *port, gpio_port_pins_t mask,
+	int (*pin_configure)(const struct device *port, gpio_pin_t pin,
+			     gpio_flags_t flags);
+	int (*port_get_raw)(const struct device *port,
+			    gpio_port_value_t *value);
+	int (*port_set_masked_raw)(const struct device *port,
+				   gpio_port_pins_t mask,
 				   gpio_port_value_t value);
-	int (*port_set_bits_raw)(struct device *port, gpio_port_pins_t pins);
-	int (*port_clear_bits_raw)(struct device *port, gpio_port_pins_t pins);
-	int (*port_toggle_bits)(struct device *port, gpio_port_pins_t pins);
-	int (*pin_interrupt_configure)(struct device *port, gpio_pin_t pin,
+	int (*port_set_bits_raw)(const struct device *port,
+				 gpio_port_pins_t pins);
+	int (*port_clear_bits_raw)(const struct device *port,
+				   gpio_port_pins_t pins);
+	int (*port_toggle_bits)(const struct device *port,
+				gpio_port_pins_t pins);
+	int (*pin_interrupt_configure)(const struct device *port,
+				       gpio_pin_t pin,
 				       enum gpio_int_mode, enum gpio_int_trig);
-	int (*manage_callback)(struct device *port, struct gpio_callback *cb,
+	int (*manage_callback)(const struct device *port,
+			       struct gpio_callback *cb,
 			       bool set);
-	uint32_t (*get_pending_int)(struct device *dev);
+	uint32_t (*get_pending_int)(const struct device *dev);
 };
-
-__syscall int gpio_config(struct device *port, gpio_pin_t pin,
-			  gpio_flags_t flags);
-
-static inline int z_impl_gpio_config(struct device *port,
-				     gpio_pin_t pin, gpio_flags_t flags)
-{
-	const struct gpio_driver_api *api =
-		(const struct gpio_driver_api *)port->driver_api;
-
-	return api->pin_configure(port, pin, flags);
-}
 
 /**
  * @endcond
@@ -460,20 +614,20 @@ static inline int z_impl_gpio_config(struct device *port,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-__syscall int gpio_pin_interrupt_configure(struct device *port,
+__syscall int gpio_pin_interrupt_configure(const struct device *port,
 					   gpio_pin_t pin,
 					   gpio_flags_t flags);
 
-static inline int z_impl_gpio_pin_interrupt_configure(struct device *port,
+static inline int z_impl_gpio_pin_interrupt_configure(const struct device *port,
 						      gpio_pin_t pin,
 						      gpio_flags_t flags)
 {
 	const struct gpio_driver_api *api =
-		(const struct gpio_driver_api *)port->driver_api;
+		(const struct gpio_driver_api *)port->api;
 	const struct gpio_driver_config *const cfg =
-		(const struct gpio_driver_config *)port->config_info;
+		(const struct gpio_driver_config *)port->config;
 	const struct gpio_driver_data *const data =
-		(const struct gpio_driver_data *)port->driver_data;
+		(const struct gpio_driver_data *)port->data;
 	enum gpio_int_trig trig;
 	enum gpio_int_mode mode;
 
@@ -515,6 +669,25 @@ static inline int z_impl_gpio_pin_interrupt_configure(struct device *port,
 }
 
 /**
+ * @brief Configure pin interrupts from a @p gpio_dt_spec.
+ *
+ * This is equivalent to:
+ *
+ *     gpio_pin_interrupt_configure(spec->port, spec->pin, flags);
+ *
+ * The <tt>spec->dt_flags</tt> value is not used.
+ *
+ * @param spec GPIO specification from devicetree
+ * @param flags interrupt configuration flags
+ * @return a value from gpio_pin_interrupt_configure()
+ */
+static inline int gpio_pin_interrupt_configure_dt(const struct gpio_dt_spec *spec,
+						  gpio_flags_t flags)
+{
+	return gpio_pin_interrupt_configure(spec->port, spec->pin, flags);
+}
+
+/**
  * @brief Configure a single pin.
  *
  * @param port Pointer to device structure for the driver instance.
@@ -530,16 +703,23 @@ static inline int z_impl_gpio_pin_interrupt_configure(struct device *port,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-static inline int gpio_pin_configure(struct device *port, gpio_pin_t pin,
-				     gpio_flags_t flags)
+__syscall int gpio_pin_configure(const struct device *port,
+				 gpio_pin_t pin,
+				 gpio_flags_t flags);
+
+static inline int z_impl_gpio_pin_configure(const struct device *port,
+					    gpio_pin_t pin,
+					    gpio_flags_t flags)
 {
 	const struct gpio_driver_api *api =
-		(const struct gpio_driver_api *)port->driver_api;
+		(const struct gpio_driver_api *)port->api;
 	const struct gpio_driver_config *const cfg =
-		(const struct gpio_driver_config *)port->config_info;
+		(const struct gpio_driver_config *)port->config;
 	struct gpio_driver_data *data =
-		(struct gpio_driver_data *)port->driver_data;
-	int ret;
+		(struct gpio_driver_data *)port->data;
+
+	__ASSERT((flags & GPIO_INT_MASK) == 0,
+		 "Interrupt flags are not supported");
 
 	__ASSERT((flags & (GPIO_PULL_UP | GPIO_PULL_DOWN)) !=
 		 (GPIO_PULL_UP | GPIO_PULL_DOWN),
@@ -563,31 +743,41 @@ static inline int gpio_pin_configure(struct device *port, gpio_pin_t pin,
 	if (((flags & GPIO_OUTPUT_INIT_LOGICAL) != 0)
 	    && ((flags & (GPIO_OUTPUT_INIT_LOW | GPIO_OUTPUT_INIT_HIGH)) != 0)
 	    && ((flags & GPIO_ACTIVE_LOW) != 0)) {
-		flags ^= GPIO_OUTPUT_INIT_LOW | GPIO_OUTPUT_INIT_HIGH
-			| GPIO_OUTPUT_INIT_LOGICAL;
+		flags ^= GPIO_OUTPUT_INIT_LOW | GPIO_OUTPUT_INIT_HIGH;
 	}
+
+	flags &= ~GPIO_OUTPUT_INIT_LOGICAL;
 
 	(void)cfg;
 	__ASSERT((cfg->port_pin_mask & (gpio_port_pins_t)BIT(pin)) != 0U,
 		 "Unsupported pin");
-
-	ret = gpio_config(port, pin, flags);
-	if (ret != 0) {
-		return ret;
-	}
 
 	if ((flags & GPIO_ACTIVE_LOW) != 0) {
 		data->invert |= (gpio_port_pins_t)BIT(pin);
 	} else {
 		data->invert &= ~(gpio_port_pins_t)BIT(pin);
 	}
-	if (((flags & (GPIO_INT_DISABLE | GPIO_INT_ENABLE)) != 0U)
-	    && (api->pin_interrupt_configure != NULL)) {
-		flags &= ~GPIO_INT_DEBOUNCE;
-		ret = z_impl_gpio_pin_interrupt_configure(port, pin, flags);
-	}
 
-	return ret;
+	return api->pin_configure(port, pin, flags);
+}
+
+/**
+ * @brief Configure a single pin from a @p gpio_dt_spec and some extra flags.
+ *
+ * This is equivalent to:
+ *
+ *     gpio_pin_configure(spec->port, spec->pin, spec->dt_flags | extra_flags);
+ *
+ * @param spec GPIO specification from devicetree
+ * @param extra_flags additional flags
+ * @return a value from gpio_pin_configure()
+ */
+static inline int gpio_pin_configure_dt(const struct gpio_dt_spec *spec,
+					gpio_flags_t extra_flags)
+{
+	return gpio_pin_configure(spec->port,
+				  spec->pin,
+				  spec->dt_flags | extra_flags);
 }
 
 /**
@@ -607,13 +797,14 @@ static inline int gpio_pin_configure(struct device *port, gpio_pin_t pin,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-__syscall int gpio_port_get_raw(struct device *port, gpio_port_value_t *value);
+__syscall int gpio_port_get_raw(const struct device *port,
+				gpio_port_value_t *value);
 
-static inline int z_impl_gpio_port_get_raw(struct device *port,
+static inline int z_impl_gpio_port_get_raw(const struct device *port,
 					   gpio_port_value_t *value)
 {
 	const struct gpio_driver_api *api =
-		(const struct gpio_driver_api *)port->driver_api;
+		(const struct gpio_driver_api *)port->api;
 
 	return api->port_get_raw(port, value);
 }
@@ -636,10 +827,11 @@ static inline int z_impl_gpio_port_get_raw(struct device *port,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-static inline int gpio_port_get(struct device *port, gpio_port_value_t *value)
+static inline int gpio_port_get(const struct device *port,
+				gpio_port_value_t *value)
 {
 	const struct gpio_driver_data *const data =
-			(const struct gpio_driver_data *)port->driver_data;
+			(const struct gpio_driver_data *)port->data;
 	int ret;
 
 	ret = gpio_port_get_raw(port, value);
@@ -667,14 +859,16 @@ static inline int gpio_port_get(struct device *port, gpio_port_value_t *value)
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-__syscall int gpio_port_set_masked_raw(struct device *port,
-		gpio_port_pins_t mask, gpio_port_value_t value);
+__syscall int gpio_port_set_masked_raw(const struct device *port,
+				       gpio_port_pins_t mask,
+				       gpio_port_value_t value);
 
-static inline int z_impl_gpio_port_set_masked_raw(struct device *port,
-		gpio_port_pins_t mask, gpio_port_value_t value)
+static inline int z_impl_gpio_port_set_masked_raw(const struct device *port,
+						  gpio_port_pins_t mask,
+						  gpio_port_value_t value)
 {
 	const struct gpio_driver_api *api =
-		(const struct gpio_driver_api *)port->driver_api;
+		(const struct gpio_driver_api *)port->api;
 
 	return api->port_set_masked_raw(port, mask, value);
 }
@@ -699,11 +893,12 @@ static inline int z_impl_gpio_port_set_masked_raw(struct device *port,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-static inline int gpio_port_set_masked(struct device *port,
-		gpio_port_pins_t mask, gpio_port_value_t value)
+static inline int gpio_port_set_masked(const struct device *port,
+				       gpio_port_pins_t mask,
+				       gpio_port_value_t value)
 {
 	const struct gpio_driver_data *const data =
-			(const struct gpio_driver_data *)port->driver_data;
+			(const struct gpio_driver_data *)port->data;
 
 	value ^= data->invert;
 
@@ -720,14 +915,14 @@ static inline int gpio_port_set_masked(struct device *port,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-__syscall int gpio_port_set_bits_raw(struct device *port,
+__syscall int gpio_port_set_bits_raw(const struct device *port,
 				     gpio_port_pins_t pins);
 
-static inline int z_impl_gpio_port_set_bits_raw(struct device *port,
+static inline int z_impl_gpio_port_set_bits_raw(const struct device *port,
 						gpio_port_pins_t pins)
 {
 	const struct gpio_driver_api *api =
-		(const struct gpio_driver_api *)port->driver_api;
+		(const struct gpio_driver_api *)port->api;
 
 	return api->port_set_bits_raw(port, pins);
 }
@@ -742,7 +937,8 @@ static inline int z_impl_gpio_port_set_bits_raw(struct device *port,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-static inline int gpio_port_set_bits(struct device *port, gpio_port_pins_t pins)
+static inline int gpio_port_set_bits(const struct device *port,
+				     gpio_port_pins_t pins)
 {
 	return gpio_port_set_masked(port, pins, pins);
 }
@@ -757,14 +953,14 @@ static inline int gpio_port_set_bits(struct device *port, gpio_port_pins_t pins)
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-__syscall int gpio_port_clear_bits_raw(struct device *port,
+__syscall int gpio_port_clear_bits_raw(const struct device *port,
 				       gpio_port_pins_t pins);
 
-static inline int z_impl_gpio_port_clear_bits_raw(struct device *port,
+static inline int z_impl_gpio_port_clear_bits_raw(const struct device *port,
 						  gpio_port_pins_t pins)
 {
 	const struct gpio_driver_api *api =
-		(const struct gpio_driver_api *)port->driver_api;
+		(const struct gpio_driver_api *)port->api;
 
 	return api->port_clear_bits_raw(port, pins);
 }
@@ -779,7 +975,7 @@ static inline int z_impl_gpio_port_clear_bits_raw(struct device *port,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-static inline int gpio_port_clear_bits(struct device *port,
+static inline int gpio_port_clear_bits(const struct device *port,
 				       gpio_port_pins_t pins)
 {
 	return gpio_port_set_masked(port, pins, 0);
@@ -795,13 +991,14 @@ static inline int gpio_port_clear_bits(struct device *port,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-__syscall int gpio_port_toggle_bits(struct device *port, gpio_port_pins_t pins);
+__syscall int gpio_port_toggle_bits(const struct device *port,
+				    gpio_port_pins_t pins);
 
-static inline int z_impl_gpio_port_toggle_bits(struct device *port,
+static inline int z_impl_gpio_port_toggle_bits(const struct device *port,
 					       gpio_port_pins_t pins)
 {
 	const struct gpio_driver_api *api =
-		(const struct gpio_driver_api *)port->driver_api;
+		(const struct gpio_driver_api *)port->api;
 
 	return api->port_toggle_bits(port, pins);
 }
@@ -817,8 +1014,9 @@ static inline int z_impl_gpio_port_toggle_bits(struct device *port,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-static inline int gpio_port_set_clr_bits_raw(struct device *port,
-		gpio_port_pins_t set_pins, gpio_port_pins_t clear_pins)
+static inline int gpio_port_set_clr_bits_raw(const struct device *port,
+					     gpio_port_pins_t set_pins,
+					     gpio_port_pins_t clear_pins)
 {
 	__ASSERT((set_pins & clear_pins) == 0, "Set and Clear pins overlap");
 
@@ -836,8 +1034,9 @@ static inline int gpio_port_set_clr_bits_raw(struct device *port,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-static inline int gpio_port_set_clr_bits(struct device *port,
-		gpio_port_pins_t set_pins, gpio_port_pins_t clear_pins)
+static inline int gpio_port_set_clr_bits(const struct device *port,
+					 gpio_port_pins_t set_pins,
+					 gpio_port_pins_t clear_pins)
 {
 	__ASSERT((set_pins & clear_pins) == 0, "Set and Clear pins overlap");
 
@@ -859,10 +1058,10 @@ static inline int gpio_port_set_clr_bits(struct device *port,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-static inline int gpio_pin_get_raw(struct device *port, gpio_pin_t pin)
+static inline int gpio_pin_get_raw(const struct device *port, gpio_pin_t pin)
 {
 	const struct gpio_driver_config *const cfg =
-		(const struct gpio_driver_config *)port->config_info;
+		(const struct gpio_driver_config *)port->config;
 	gpio_port_value_t value;
 	int ret;
 
@@ -897,10 +1096,10 @@ static inline int gpio_pin_get_raw(struct device *port, gpio_pin_t pin)
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-static inline int gpio_pin_get(struct device *port, gpio_pin_t pin)
+static inline int gpio_pin_get(const struct device *port, gpio_pin_t pin)
 {
 	const struct gpio_driver_config *const cfg =
-		(const struct gpio_driver_config *)port->config_info;
+		(const struct gpio_driver_config *)port->config;
 	gpio_port_value_t value;
 	int ret;
 
@@ -914,6 +1113,21 @@ static inline int gpio_pin_get(struct device *port, gpio_pin_t pin)
 	}
 
 	return ret;
+}
+
+/**
+ * @brief Get logical level of an input pin from a @p gpio_dt_spec.
+ *
+ * This is equivalent to:
+ *
+ *     gpio_pin_get(spec->port, spec->pin);
+ *
+ * @param spec GPIO specification from devicetree
+ * @return a value from gpio_pin_get()
+ */
+static inline int gpio_pin_get_dt(const struct gpio_dt_spec *spec)
+{
+	return gpio_pin_get(spec->port, spec->pin);
 }
 
 /**
@@ -931,11 +1145,11 @@ static inline int gpio_pin_get(struct device *port, gpio_pin_t pin)
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-static inline int gpio_pin_set_raw(struct device *port, gpio_pin_t pin,
+static inline int gpio_pin_set_raw(const struct device *port, gpio_pin_t pin,
 				   int value)
 {
 	const struct gpio_driver_config *const cfg =
-		(const struct gpio_driver_config *)port->config_info;
+		(const struct gpio_driver_config *)port->config;
 	int ret;
 
 	(void)cfg;
@@ -972,12 +1186,13 @@ static inline int gpio_pin_set_raw(struct device *port, gpio_pin_t pin,
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-static inline int gpio_pin_set(struct device *port, gpio_pin_t pin, int value)
+static inline int gpio_pin_set(const struct device *port, gpio_pin_t pin,
+			       int value)
 {
 	const struct gpio_driver_config *const cfg =
-		(const struct gpio_driver_config *)port->config_info;
+		(const struct gpio_driver_config *)port->config;
 	const struct gpio_driver_data *const data =
-			(const struct gpio_driver_data *)port->driver_data;
+			(const struct gpio_driver_data *)port->data;
 
 	(void)cfg;
 	__ASSERT((cfg->port_pin_mask & (gpio_port_pins_t)BIT(pin)) != 0U,
@@ -991,6 +1206,22 @@ static inline int gpio_pin_set(struct device *port, gpio_pin_t pin, int value)
 }
 
 /**
+ * @brief Set logical level of a output pin from a @p gpio_dt_spec.
+ *
+ * This is equivalent to:
+ *
+ *     gpio_pin_set(spec->port, spec->pin, value);
+ *
+ * @param spec GPIO specification from devicetree
+ * @param value Value assigned to the pin.
+ * @return a value from gpio_pin_set()
+ */
+static inline int gpio_pin_set_dt(const struct gpio_dt_spec *spec, int value)
+{
+	return gpio_pin_set(spec->port, spec->pin, value);
+}
+
+/**
  * @brief Toggle pin level.
  *
  * @param port Pointer to the device structure for the driver instance.
@@ -1000,16 +1231,31 @@ static inline int gpio_pin_set(struct device *port, gpio_pin_t pin, int value)
  * @retval -EIO I/O error when accessing an external GPIO chip.
  * @retval -EWOULDBLOCK if operation would block.
  */
-static inline int gpio_pin_toggle(struct device *port, gpio_pin_t pin)
+static inline int gpio_pin_toggle(const struct device *port, gpio_pin_t pin)
 {
 	const struct gpio_driver_config *const cfg =
-		(const struct gpio_driver_config *)port->config_info;
+		(const struct gpio_driver_config *)port->config;
 
 	(void)cfg;
 	__ASSERT((cfg->port_pin_mask & (gpio_port_pins_t)BIT(pin)) != 0U,
 		 "Unsupported pin");
 
 	return gpio_port_toggle_bits(port, (gpio_port_pins_t)BIT(pin));
+}
+
+/**
+ * @brief Toggle pin level from a @p gpio_dt_spec.
+ *
+ * This is equivalent to:
+ *
+ *     gpio_pin_toggle(spec->port, spec->pin);
+ *
+ * @param spec GPIO specification from devicetree
+ * @return a value from gpio_pin_toggle()
+ */
+static inline int gpio_pin_toggle_dt(const struct gpio_dt_spec *spec)
+{
+	return gpio_pin_toggle(spec->port, spec->pin);
 }
 
 /**
@@ -1041,11 +1287,11 @@ static inline void gpio_init_callback(struct gpio_callback *callback,
  *
  * Note: enables to add as many callback as needed on the same port.
  */
-static inline int gpio_add_callback(struct device *port,
+static inline int gpio_add_callback(const struct device *port,
 				    struct gpio_callback *callback)
 {
 	const struct gpio_driver_api *api =
-		(const struct gpio_driver_api *)port->driver_api;
+		(const struct gpio_driver_api *)port->api;
 
 	if (api->manage_callback == NULL) {
 		return -ENOTSUP;
@@ -1070,11 +1316,11 @@ static inline int gpio_add_callback(struct device *port,
  * Note: enables to remove as many callbacks as added through
  *       gpio_add_callback().
  */
-static inline int gpio_remove_callback(struct device *port,
+static inline int gpio_remove_callback(const struct device *port,
 				       struct gpio_callback *callback)
 {
 	const struct gpio_driver_api *api =
-		(const struct gpio_driver_api *)port->driver_api;
+		(const struct gpio_driver_api *)port->api;
 
 	if (api->manage_callback == NULL) {
 		return -ENOTSUP;
@@ -1096,12 +1342,12 @@ static inline int gpio_remove_callback(struct device *port,
  * @retval status != 0 if at least one gpio interrupt is pending.
  * @retval 0 if no gpio interrupt is pending.
  */
-__syscall int gpio_get_pending_int(struct device *dev);
+__syscall int gpio_get_pending_int(const struct device *dev);
 
-static inline int z_impl_gpio_get_pending_int(struct device *dev)
+static inline int z_impl_gpio_get_pending_int(const struct device *dev)
 {
 	const struct gpio_driver_api *api =
-		(const struct gpio_driver_api *)dev->driver_api;
+		(const struct gpio_driver_api *)dev->api;
 
 	if (api->get_pending_int == NULL) {
 		return -ENOTSUP;

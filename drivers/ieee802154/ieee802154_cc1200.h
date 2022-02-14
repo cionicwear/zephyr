@@ -30,7 +30,7 @@ enum cc1200_gpio_index {
 };
 
 struct cc1200_gpio_configuration {
-	struct device *dev;
+	const struct device *dev;
 	uint32_t pin;
 };
 
@@ -43,7 +43,7 @@ struct cc1200_context {
 	/**************************/
 	struct cc1200_gpio_configuration gpios[CC1200_GPIO_IDX_MAX];
 	struct gpio_callback rx_tx_cb;
-	struct device *spi;
+	const struct device *spi;
 	struct spi_config spi_cfg;
 	uint8_t mac_addr[8];
 	/************RF************/
@@ -53,7 +53,7 @@ struct cc1200_context {
 	atomic_t tx;
 	atomic_t tx_start;
 	/************RX************/
-	K_THREAD_STACK_MEMBER(rx_stack,
+	K_KERNEL_STACK_MEMBER(rx_stack,
 			      CONFIG_IEEE802154_CC1200_RX_STACK_SIZE);
 	struct k_thread rx_thread;
 	struct k_sem rx_lock;

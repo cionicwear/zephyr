@@ -5,7 +5,40 @@
 file(MAKE_DIRECTORY ${PROJECT_BINARY_DIR}/kconfig/include/generated)
 file(MAKE_DIRECTORY ${PROJECT_BINARY_DIR}/kconfig/include/config)
 
+# Support multiple SOC_ROOT, remove ZEPHYR_BASE as that is always sourced.
+set(kconfig_soc_root ${SOC_ROOT})
+list(REMOVE_ITEM kconfig_soc_root ${ZEPHYR_BASE})
+set(OPERATION WRITE)
+foreach(root ${kconfig_soc_root})
+  file(${OPERATION} ${KCONFIG_BINARY_DIR}/Kconfig.soc.defconfig
+       "osource \"${root}/soc/$(ARCH)/*/Kconfig.defconfig\"\n"
+  )
+  file(${OPERATION} ${KCONFIG_BINARY_DIR}/Kconfig.soc
+       "osource \"${root}/soc/$(ARCH)/*/Kconfig.soc\"\n"
+  )
+  file(${OPERATION} ${KCONFIG_BINARY_DIR}/Kconfig.soc.arch
+       "osource \"${root}/soc/$(ARCH)/Kconfig\"\n"
+       "osource \"${root}/soc/$(ARCH)/*/Kconfig\"\n"
+  )
+  set(OPERATION APPEND)
+endforeach()
+
+# Support multiple shields in BOARD_ROOT, remove ZEPHYR_BASE as that is always sourced.
+set(kconfig_board_root ${BOARD_ROOT})
+list(REMOVE_ITEM kconfig_board_root ${ZEPHYR_BASE})
+set(OPERATION WRITE)
+foreach(root ${kconfig_board_root})
+  file(${OPERATION} ${KCONFIG_BINARY_DIR}/Kconfig.shield.defconfig
+       "osource \"${root}/boards/shields/*/Kconfig.defconfig\"\n"
+  )
+  file(${OPERATION} ${KCONFIG_BINARY_DIR}/Kconfig.shield
+       "osource \"${root}/boards/shields/*/Kconfig.shield\"\n"
+  )
+  set(OPERATION APPEND)
+endforeach()
+
 if(KCONFIG_ROOT)
+  zephyr_file(APPLICATION_ROOT KCONFIG_ROOT)
   # KCONFIG_ROOT has either been specified as a CMake variable or is
   # already in the CMakeCache.txt. This has precedence.
 elseif(EXISTS   ${APPLICATION_SOURCE_DIR}/Kconfig)
@@ -26,27 +59,55 @@ if(OVERLAY_CONFIG)
   string(REPLACE " " ";" OVERLAY_CONFIG_AS_LIST "${OVERLAY_CONFIG}")
 endif()
 
+if((DEFINED BOARD_REVISION) AND EXISTS ${BOARD_DIR}/${BOARD}_${BOARD_REVISION_STRING}.conf)
+  list(INSERT CONF_FILE_AS_LIST 0 ${BOARD_DIR}/${BOARD}_${BOARD_REVISION_STRING}.conf)
+endif()
+
 # DTS_ROOT_BINDINGS is a semicolon separated list, this causes
 # problems when invoking kconfig_target since semicolon is a special
 # character in the C shell, so we make it into a question-mark
 # separated list instead.
 string(REPLACE ";" "?" DTS_ROOT_BINDINGS "${DTS_ROOT_BINDINGS}")
 
-set(ENV{srctree}            ${ZEPHYR_BASE})
-set(ENV{KERNELVERSION}      ${KERNELVERSION})
-set(ENV{KCONFIG_CONFIG}     ${DOTCONFIG})
-set(ENV{PYTHON_EXECUTABLE} ${PYTHON_EXECUTABLE})
+# Export each `ZEPHYR_<module>_MODULE_DIR` to Kconfig.
+# This allows Kconfig files to refer relative from a modules root as:
+# source "$(ZEPHYR_FOO_MODULE_DIR)/Kconfig"
+foreach(module_name ${ZEPHYR_MODULE_NAMES})
+  zephyr_string(SANITIZE TOUPPER MODULE_NAME_UPPER ${module_name})
+  list(APPEND
+       ZEPHYR_KCONFIG_MODULES_DIR
+       "ZEPHYR_${MODULE_NAME_UPPER}_MODULE_DIR=${ZEPHYR_${MODULE_NAME_UPPER}_MODULE_DIR}"
+  )
 
-# Set environment variables so that Kconfig can prune Kconfig source
-# files for other architectures
-set(ENV{ARCH}      ${ARCH})
-set(ENV{BOARD_DIR} ${BOARD_DIR})
-set(ENV{SOC_DIR}   ${SOC_DIR})
-set(ENV{SHIELD_AS_LIST} "${SHIELD_AS_LIST}")
-set(ENV{CMAKE_BINARY_DIR} ${CMAKE_BINARY_DIR})
-set(ENV{ARCH_DIR}   ${ARCH_DIR})
-set(ENV{TOOLCHAIN_KCONFIG_DIR} "${TOOLCHAIN_KCONFIG_DIR}")
-set(ENV{EDT_PICKLE} ${EDT_PICKLE})
+  if(ZEPHYR_${MODULE_NAME_UPPER}_KCONFIG)
+    list(APPEND
+         ZEPHYR_KCONFIG_MODULES_DIR
+         "ZEPHYR_${MODULE_NAME_UPPER}_KCONFIG=${ZEPHYR_${MODULE_NAME_UPPER}_KCONFIG}"
+  )
+  endif()
+endforeach()
+
+# A list of common environment settings used when invoking Kconfig during CMake
+# configure time or menuconfig and related build target.
+string(REPLACE ";" "\\\;" SHIELD_AS_LIST_ESCAPED "${SHIELD_AS_LIST}")
+
+set(COMMON_KCONFIG_ENV_SETTINGS
+  PYTHON_EXECUTABLE=${PYTHON_EXECUTABLE}
+  srctree=${ZEPHYR_BASE}
+  KERNELVERSION=${KERNELVERSION}
+  KCONFIG_CONFIG=${DOTCONFIG}
+  # Set environment variables so that Kconfig can prune Kconfig source
+  # files for other architectures
+  ARCH=${ARCH}
+  ARCH_DIR=${ARCH_DIR}
+  BOARD_DIR=${BOARD_DIR}
+  KCONFIG_BINARY_DIR=${KCONFIG_BINARY_DIR}
+  TOOLCHAIN_KCONFIG_DIR=${TOOLCHAIN_KCONFIG_DIR}
+  TOOLCHAIN_HAS_NEWLIB=$<IF:$<BOOL:${TOOLCHAIN_HAS_NEWLIB}>,y,n>
+  EDT_PICKLE=${EDT_PICKLE}
+  # Export all Zephyr modules to Kconfig
+  ${ZEPHYR_KCONFIG_MODULES_DIR}
+)
 
 # Allow out-of-tree users to add their own Kconfig python frontend
 # targets by appending targets to the CMake list
@@ -78,28 +139,18 @@ foreach(kconfig_target
   add_custom_target(
     ${kconfig_target}
     ${CMAKE_COMMAND} -E env
-    PYTHON_EXECUTABLE=${PYTHON_EXECUTABLE}
-    srctree=${ZEPHYR_BASE}
-    KERNELVERSION=${KERNELVERSION}
     ZEPHYR_BASE=${ZEPHYR_BASE}
-    KCONFIG_CONFIG=${DOTCONFIG}
-    ARCH=$ENV{ARCH}
-    BOARD_DIR=$ENV{BOARD_DIR}
-    SOC_DIR=$ENV{SOC_DIR}
-    SHIELD_AS_LIST=$ENV{SHIELD_AS_LIST}
-    CMAKE_BINARY_DIR=$ENV{CMAKE_BINARY_DIR}
     ZEPHYR_TOOLCHAIN_VARIANT=${ZEPHYR_TOOLCHAIN_VARIANT}
-    TOOLCHAIN_KCONFIG_DIR=${TOOLCHAIN_KCONFIG_DIR}
-    ARCH_DIR=$ENV{ARCH_DIR}
-    EXTRA_DTC_FLAGS=${EXTRA_DTC_FLAGS}
+    ${COMMON_KCONFIG_ENV_SETTINGS}
+    "SHIELD_AS_LIST=${SHIELD_AS_LIST_ESCAPED}"
     DTS_POST_CPP=${DTS_POST_CPP}
     DTS_ROOT_BINDINGS=${DTS_ROOT_BINDINGS}
-    EDT_PICKLE=${EDT_PICKLE}
     ${PYTHON_EXECUTABLE}
     ${EXTRA_KCONFIG_TARGET_COMMAND_FOR_${kconfig_target}}
     ${KCONFIG_ROOT}
     WORKING_DIRECTORY ${PROJECT_BINARY_DIR}/kconfig
     USES_TERMINAL
+    COMMAND_EXPAND_LISTS
     )
 endforeach()
 
@@ -197,7 +248,9 @@ else()
 endif()
 
 execute_process(
-  COMMAND
+  COMMAND ${CMAKE_COMMAND} -E env
+  ${COMMON_KCONFIG_ENV_SETTINGS}
+  SHIELD_AS_LIST=${SHIELD_AS_LIST_ESCAPED}
   ${PYTHON_EXECUTABLE}
   ${ZEPHYR_BASE}/scripts/kconfig/kconfig.py
   --zephyr-base=${ZEPHYR_BASE}
@@ -236,7 +289,7 @@ foreach(kconfig_input
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${kconfig_input})
 endforeach()
 
-add_custom_target(config-sanitycheck DEPENDS ${DOTCONFIG})
+add_custom_target(config-twister DEPENDS ${DOTCONFIG})
 
 # Remove the CLI Kconfig symbols from the namespace and
 # CMakeCache.txt. If the symbols end up in DOTCONFIG they will be

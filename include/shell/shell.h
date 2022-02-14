@@ -16,11 +16,13 @@
 #include <logging/log.h>
 #include <sys/util.h>
 
+#if defined CONFIG_SHELL_GETOPT
+#include <shell/shell_getopt.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define SHELL_RX_BUFF_SIZE 16
 
 #ifndef CONFIG_SHELL_CMD_BUFF_SIZE
 #define CONFIG_SHELL_CMD_BUFF_SIZE 0
@@ -34,7 +36,7 @@ extern "C" {
 #define CONFIG_SHELL_HISTORY_BUFFER 0
 #endif
 
-#define SHELL_CMD_ROOT_LVL		(0u)
+#define Z_SHELL_CMD_ROOT_LVL		(0u)
 
 #define SHELL_HEXDUMP_BYTES_IN_LINE	16
 
@@ -69,6 +71,7 @@ extern "C" {
  * @{
  */
 
+struct getopt_state;
 struct shell_static_entry;
 
 /**
@@ -121,7 +124,7 @@ struct shell_static_args {
  * devices.  Indexing is done relative to devices with names that
  * start with this text.  Pass null if no prefix match is required.
  */
-struct device *shell_device_lookup(size_t idx,
+const struct device *shell_device_lookup(size_t idx,
 				   const char *prefix);
 
 /**
@@ -138,6 +141,22 @@ struct device *shell_device_lookup(size_t idx,
  */
 typedef int (*shell_cmd_handler)(const struct shell *shell,
 				 size_t argc, char **argv);
+
+/**
+ * @brief Shell dictionary command handler prototype.
+ *
+ * @param shell Shell instance.
+ * @param argc  Arguments count.
+ * @param argv  Arguments.
+ * @param data  Pointer to the user data.
+ *
+ * @retval 0 Successful command execution.
+ * @retval 1 Help printed and command not executed.
+ * @retval -EINVAL Argument validation failed.
+ * @retval -ENOEXEC Command not executed.
+ */
+typedef int (*shell_dict_cmd_handler)(const struct shell *shell, size_t argc,
+				      char **argv, void *data);
 
 /*
  * @brief Shell static command descriptor.
@@ -162,7 +181,7 @@ struct shell_static_entry {
  * @param[in] subcmd	Pointer to a subcommands array.
  * @param[in] help	Pointer to a command help string.
  * @param[in] handler	Pointer to a function handler.
- * @param[in] mandatory	Number of mandatory arguments.
+ * @param[in] mandatory	Number of mandatory arguments includig command name.
  * @param[in] optional	Number of optional arguments.
  */
 #define SHELL_CMD_ARG_REGISTER(syntax, subcmd, help, handler,		   \
@@ -194,7 +213,7 @@ struct shell_static_entry {
  * @param[in] subcmd	Pointer to a subcommands array.
  * @param[in] help	Pointer to a command help string.
  * @param[in] handler	Pointer to a function handler.
- * @param[in] mandatory	Number of mandatory arguments.
+ * @param[in] mandatory	Number of mandatory arguments includig command name.
  * @param[in] optional	Number of optional arguments.
  */
 #define SHELL_COND_CMD_ARG_REGISTER(flag, syntax, subcmd, help, handler, \
@@ -295,7 +314,7 @@ struct shell_static_entry {
  * @param[in] subcmd	 Pointer to a subcommands array.
  * @param[in] help	 Pointer to a command help string.
  * @param[in] handler	 Pointer to a function handler.
- * @param[in] mand	 Number of mandatory arguments.
+ * @param[in] mand	 Number of mandatory arguments includig command name.
  * @param[in] opt	 Number of optional arguments.
  */
 #define SHELL_CMD_ARG(syntax, subcmd, help, handler, mand, opt) \
@@ -317,7 +336,7 @@ struct shell_static_entry {
  * @param[in] subcmd	 Pointer to a subcommands array.
  * @param[in] help	 Pointer to a command help string.
  * @param[in] handler	 Pointer to a function handler.
- * @param[in] mand	 Number of mandatory arguments.
+ * @param[in] mand	 Number of mandatory arguments includig command name.
  * @param[in] opt	 Number of optional arguments.
  */
 #define SHELL_COND_CMD_ARG(flag, syntax, subcmd, help, handler, mand, opt) \
@@ -340,7 +359,7 @@ struct shell_static_entry {
  * @param[in] _subcmd	 Pointer to a subcommands array.
  * @param[in] _help	 Pointer to a command help string.
  * @param[in] _handler	 Pointer to a function handler.
- * @param[in] _mand	 Number of mandatory arguments.
+ * @param[in] _mand	 Number of mandatory arguments includig command name.
  * @param[in] _opt	 Number of optional arguments.
  */
 #define SHELL_EXPR_CMD_ARG(_expr, _syntax, _subcmd, _help, _handler, \
@@ -396,6 +415,58 @@ struct shell_static_entry {
 #define SHELL_EXPR_CMD(_expr, _syntax, _subcmd, _help, _handler) \
 	SHELL_EXPR_CMD_ARG(_expr, _syntax, _subcmd, _help, _handler, 0, 0)
 
+/* Internal macro used for creating handlers for dictionary commands. */
+#define Z_SHELL_CMD_DICT_HANDLER_CREATE(_data, _handler)		\
+static int UTIL_CAT(cmd_dict_, GET_ARG_N(1, __DEBRACKET _data))(	\
+		const struct shell *shell, size_t argc, char **argv)	\
+{									\
+	return _handler(shell, argc, argv,				\
+			(void *)GET_ARG_N(2, __DEBRACKET _data));	\
+}
+
+/* Internal macro used for creating dictionary commands. */
+#define SHELL_CMD_DICT_CREATE(_data)					\
+	SHELL_CMD_ARG(GET_ARG_N(1, __DEBRACKET _data), NULL, NULL,	\
+		UTIL_CAT(cmd_dict_, GET_ARG_N(1, __DEBRACKET _data)), 1, 0)
+
+/**
+ * @brief Initializes shell dictionary commands.
+ *
+ * This is a special kind of static commands. Dictionary commands can be used
+ * every time you want to use a pair: (string <-> corresponding data) in
+ * a command handler. The string is usually a verbal description of a given
+ * data. The idea is to use the string as a command syntax that can be prompted
+ * by the shell and corresponding data can be used to process the command.
+ *
+ * @param[in] _name	Name of the dictionary subcommand set
+ * @param[in] _handler	Command handler common for all dictionary commands.
+ *			@see shell_dict_cmd_handler
+ * @param[in] ...	Dictionary pairs: (command_syntax, value). Value will be
+ *			passed to the _handler as user data.
+ *
+ * Example usage:
+ *	static int my_handler(const struct shell *shell,
+ *			      size_t argc, char **argv, void *data)
+ *	{
+ *		int val = (int)data;
+ *
+ *		shell_print(shell, "(syntax, value) : (%s, %d)", argv[0], val);
+ *		return 0;
+ *	}
+ *
+ *	SHELL_SUBCMD_DICT_SET_CREATE(sub_dict_cmds, my_handler,
+ *		(value_0, 0), (value_1, 1), (value_2, 2), (value_3, 3)
+ *	);
+ *	SHELL_CMD_REGISTER(dictionary, &sub_dict_cmds, NULL, NULL);
+ */
+#define SHELL_SUBCMD_DICT_SET_CREATE(_name, _handler, ...)		\
+	FOR_EACH_FIXED_ARG(Z_SHELL_CMD_DICT_HANDLER_CREATE, (),		\
+			   _handler, __VA_ARGS__)			\
+	SHELL_STATIC_SUBCMD_SET_CREATE(_name,				\
+		FOR_EACH(SHELL_CMD_DICT_CREATE, (,), __VA_ARGS__),	\
+		SHELL_SUBCMD_SET_END					\
+	)
+
 /**
  * @internal @brief Internal shell state in response to data received from the
  * terminal.
@@ -426,6 +497,19 @@ enum shell_transport_evt {
 
 typedef void (*shell_transport_handler_t)(enum shell_transport_evt evt,
 					  void *context);
+
+
+typedef void (*shell_uninit_cb_t)(const struct shell *shell, int res);
+
+/** @brief Bypass callback.
+ *
+ * @param shell Shell instance.
+ * @param data  Raw data from transport.
+ * @param len   Data length.
+ */
+typedef void (*shell_bypass_cb_t)(const struct shell *shell,
+				  uint8_t *data,
+				  size_t len);
 
 struct shell_transport;
 
@@ -523,11 +607,11 @@ struct shell_stats {
 };
 
 #ifdef CONFIG_SHELL_STATS
-#define SHELL_STATS_DEFINE(_name) static struct shell_stats _name##_stats
-#define SHELL_STATS_PTR(_name) (&(_name##_stats))
+#define Z_SHELL_STATS_DEFINE(_name) static struct shell_stats _name##_stats
+#define Z_SHELL_STATS_PTR(_name) (&(_name##_stats))
 #else
-#define SHELL_STATS_DEFINE(_name)
-#define SHELL_STATS_PTR(_name) NULL
+#define Z_SHELL_STATS_DEFINE(_name)
+#define Z_SHELL_STATS_PTR(_name) NULL
 #endif /* CONFIG_SHELL_STATS */
 
 /**
@@ -537,17 +621,19 @@ struct shell_flags {
 	uint32_t insert_mode :1; /*!< Controls insert mode for text introduction.*/
 	uint32_t use_colors  :1; /*!< Controls colored syntax.*/
 	uint32_t echo        :1; /*!< Controls shell echo.*/
+	uint32_t obscure     :1; /*!< If echo on, print asterisk instead */
 	uint32_t processing  :1; /*!< Shell is executing process function.*/
 	uint32_t tx_rdy      :1;
 	uint32_t mode_delete :1; /*!< Operation mode of backspace key */
 	uint32_t history_exit:1; /*!< Request to exit history mode */
-	uint32_t cmd_ctx	  :1; /*!< Shell is executing command */
 	uint32_t last_nl     :8; /*!< Last received new line character */
+	uint32_t cmd_ctx     :1; /*!< Shell is executing command */
+	uint32_t print_noinit:1; /*!< Print request from not initialized shell*/
+	uint32_t panic_mode  :1; /*!< Shell in panic mode */
 };
 
 BUILD_ASSERT((sizeof(struct shell_flags) == sizeof(uint32_t)),
 	     "Structure must fit in 4 bytes");
-
 
 /**
  * @internal @brief Union for internal shell usage.
@@ -583,6 +669,19 @@ struct shell_ctx {
 	/*!< VT100 color and cursor position, terminal width.*/
 	struct shell_vt100_ctx vt100_ctx;
 
+	/*!< Callback called from shell thread context when unitialization is
+	 * completed just before aborting shell thread.
+	 */
+	shell_uninit_cb_t uninit_cb;
+
+	/*!< When bypass is set, all incoming data is passed to the callback. */
+	shell_bypass_cb_t bypass;
+
+#if defined CONFIG_SHELL_GETOPT
+	/*!< getopt context for a shell backend. */
+	struct getopt_state getopt_state;
+#endif
+
 	uint16_t cmd_buff_len; /*!< Command length.*/
 	uint16_t cmd_buff_pos; /*!< Command buffer cursor position.*/
 
@@ -600,6 +699,10 @@ struct shell_ctx {
 	volatile union shell_internal internal; /*!< Internal shell data.*/
 
 	struct k_poll_signal signals[SHELL_SIGNALS];
+
+	/*!< Events that should be used only internally by shell thread.
+	 * Event for SHELL_SIGNAL_TXDONE is initialized but unused.
+	 */
 	struct k_poll_event events[SHELL_SIGNALS];
 
 	struct k_mutex wr_mtx;
@@ -642,8 +745,8 @@ struct shell {
 	k_thread_stack_t *stack;
 };
 
-extern void shell_print_stream(const void *user_ctx, const char *data,
-			       size_t data_len);
+extern void z_shell_print_stream(const void *user_ctx, const char *data,
+				 size_t data_len);
 /**
  * @brief Macro for defining a shell instance.
  *
@@ -661,19 +764,19 @@ extern void shell_print_stream(const void *user_ctx, const char *data,
 		     _log_queue_size, _log_timeout, _shell_flag)	      \
 	static const struct shell _name;				      \
 	static struct shell_ctx UTIL_CAT(_name, _ctx);			      \
-	static uint8_t _name##_out_buffer[CONFIG_SHELL_PRINTF_BUFF_SIZE];	      \
-	SHELL_LOG_BACKEND_DEFINE(_name, _name##_out_buffer,		      \
+	static uint8_t _name##_out_buffer[CONFIG_SHELL_PRINTF_BUFF_SIZE];     \
+	Z_SHELL_LOG_BACKEND_DEFINE(_name, _name##_out_buffer,		      \
 				 CONFIG_SHELL_PRINTF_BUFF_SIZE,		      \
 				 _log_queue_size, _log_timeout);	      \
-	SHELL_HISTORY_DEFINE(_name##_history, CONFIG_SHELL_HISTORY_BUFFER);   \
-	SHELL_FPRINTF_DEFINE(_name##_fprintf, &_name, _name##_out_buffer,     \
+	Z_SHELL_HISTORY_DEFINE(_name##_history, CONFIG_SHELL_HISTORY_BUFFER); \
+	Z_SHELL_FPRINTF_DEFINE(_name##_fprintf, &_name, _name##_out_buffer,   \
 			     CONFIG_SHELL_PRINTF_BUFF_SIZE,		      \
-			     true, shell_print_stream);			      \
+			     true, z_shell_print_stream);		      \
 	LOG_INSTANCE_REGISTER(shell, _name, CONFIG_SHELL_LOG_LEVEL);	      \
-	SHELL_STATS_DEFINE(_name);					      \
-	static K_THREAD_STACK_DEFINE(_name##_stack, CONFIG_SHELL_STACK_SIZE); \
+	Z_SHELL_STATS_DEFINE(_name);					      \
+	static K_KERNEL_STACK_DEFINE(_name##_stack, CONFIG_SHELL_STACK_SIZE); \
 	static struct k_thread _name##_thread;				      \
-	static const Z_STRUCT_SECTION_ITERABLE(shell, _name) = {	      \
+	static const STRUCT_SECTION_ITERABLE(shell, _name) = {		      \
 		.default_prompt = _prompt,				      \
 		.iface = _transport_iface,				      \
 		.ctx = &UTIL_CAT(_name, _ctx),				      \
@@ -681,8 +784,8 @@ extern void shell_print_stream(const void *user_ctx, const char *data,
 				&_name##_history : NULL,		      \
 		.shell_flag = _shell_flag,				      \
 		.fprintf_ctx = &_name##_fprintf,			      \
-		.stats = SHELL_STATS_PTR(_name),			      \
-		.log_backend = SHELL_LOG_BACKEND_PTR(_name),		      \
+		.stats = Z_SHELL_STATS_PTR(_name),			      \
+		.log_backend = Z_SHELL_LOG_BACKEND_PTR(_name),		      \
 		LOG_INSTANCE_PTR_INIT(log, shell, _name)		      \
 		.thread_name = STRINGIFY(_name),			      \
 		.thread = &_name##_thread,				      \
@@ -708,10 +811,11 @@ int shell_init(const struct shell *shell, const void *transport_config,
  * @brief Uninitializes the transport layer and the internal shell state.
  *
  * @param shell Pointer to shell instance.
+ * @param cb Callback called when uninitialization is completed.
  *
  * @return Standard error code.
  */
-int shell_uninit(const struct shell *shell);
+void shell_uninit(const struct shell *shell, shell_uninit_cb_t cb);
 
 /**
  * @brief Function for starting shell processing.
@@ -892,25 +996,56 @@ void shell_help(const struct shell *shell);
 /* @brief Command's help has been printed */
 #define SHELL_CMD_HELP_PRINTED	(1)
 
+#if defined CONFIG_SHELL_GETOPT
+/**
+ * @brief Parses the command-line arguments.
+ *
+ * It is based on FreeBSD implementation.
+ *
+ * @param[in] shell	Pointer to the shell instance.
+ * @param[in] argc	Arguments count.
+ * @param[in] argv	Arguments.
+ * @param[in] ostr	String containing the legitimate option characters.
+ *
+ * @return		If an option was successfully found, function returns
+ *			the option character.
+ * @return		If options have been detected that is not in @p ostr
+ *			function will return '?'.
+ *			If function encounters an option with a missing
+ *			argument, then the return value depends on the first
+ *			character in optstring: if it is ':', then ':' is
+ *			returned; otherwise '?' is returned.
+ * @return -1		If all options have been parsed.
+ */
+int shell_getopt(const struct shell *shell, int argc, char *const argv[],
+		 const char *ostr);
+
+/**
+ * @brief Returns shell_getopt state.
+ *
+ * @param[in] shell	Pointer to the shell instance.
+ *
+ * @return		Pointer to struct getopt_state.
+ */
+struct getopt_state *shell_getopt_state_get(const struct shell *shell);
+#endif /* CONFIG_SHELL_GETOPT */
+
 /** @brief Execute command.
  *
  * Pass command line to shell to execute.
  *
  * Note: This by no means makes any of the commands a stable interface, so
- * 	 this function should only be used for debugging/diagnostic.
+ *	 this function should only be used for debugging/diagnostic.
  *
  *	 This function must not be called from shell command context!
 
  *
  * @param[in] shell	Pointer to the shell instance.
- *			@rst
- *			It can be NULL when
- *			the :option:`CONFIG_SHELL_BACKEND_DUMMY` option is
- *			enabled.
- *			@endrst
+ *			It can be NULL when the
+ *			@kconfig{CONFIG_SHELL_BACKEND_DUMMY} option is enabled.
  * @param[in] cmd	Command to be executed.
  *
- * @returns		Result of the execution
+ * @return		Result of the execution
  */
 int shell_execute_cmd(const struct shell *shell, const char *cmd);
 
@@ -926,6 +1061,79 @@ int shell_execute_cmd(const struct shell *shell, const char *cmd);
  * @retval -EINVAL if invalid root command is provided.
  */
 int shell_set_root_cmd(const char *cmd);
+
+/** @brief Set bypass callback.
+ *
+ * Bypass callback is called whenever data is received. Shell is bypassed and
+ * data is passed directly to the callback. Use null to disable bypass functionality.
+ *
+ * @param[in] shell	Pointer to the shell instance.
+ * @param[in] bypass	Bypass callback or null to disable.
+ */
+void shell_set_bypass(const struct shell *shell, shell_bypass_cb_t bypass);
+
+/**
+ * @brief Allow application to control text insert mode.
+ * Value is modified atomically and the previous value is returned.
+ *
+ * @param[in] shell	Pointer to the shell instance.
+ * @param[in] val	Insert mode.
+ *
+ * @retval 0 or 1: previous value
+ * @retval -EINVAL if shell is NULL.
+ */
+int shell_insert_mode_set(const struct shell *shell, bool val);
+
+/**
+ * @brief Allow application to control whether terminal output uses colored
+ * syntax.
+ * Value is modified atomically and the previous value is returned.
+ *
+ * @param[in] shell	Pointer to the shell instance.
+ * @param[in] val	Color mode.
+ *
+ * @retval 0 or 1: previous value
+ * @retval -EINVAL if shell is NULL.
+ */
+int shell_use_colors_set(const struct shell *shell, bool val);
+
+/**
+ * @brief Allow application to control whether user input is echoed back.
+ * Value is modified atomically and the previous value is returned.
+ *
+ * @param[in] shell	Pointer to the shell instance.
+ * @param[in] val	Echo mode.
+ *
+ * @retval 0 or 1: previous value
+ * @retval -EINVAL if shell is NULL.
+ */
+int shell_echo_set(const struct shell *shell, bool val);
+
+/**
+ * @brief Allow application to control whether user input is obscured with
+ * asterisks -- useful for implementing passwords.
+ * Value is modified atomically and the previous value is returned.
+ *
+ * @param[in] shell	Pointer to the shell instance.
+ * @param[in] obscure	Obscure mode.
+ *
+ * @retval 0 or 1: previous value.
+ * @retval -EINVAL if shell is NULL.
+ */
+int shell_obscure_set(const struct shell *shell, bool obscure);
+
+/**
+ * @brief Allow application to control whether the delete key backspaces or
+ * deletes.
+ * Value is modified atomically and the previous value is returned.
+ *
+ * @param[in] shell	Pointer to the shell instance.
+ * @param[in] val	Delete mode.
+ *
+ * @retval 0 or 1: previous value
+ * @retval -EINVAL if shell is NULL.
+ */
+int shell_mode_delete_set(const struct shell *shell, bool val);
 
 /**
  * @}

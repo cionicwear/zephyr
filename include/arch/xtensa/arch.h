@@ -19,6 +19,7 @@
 #if !defined(_ASMLANGUAGE) && !defined(__ASSEMBLER__)
 #include <zephyr/types.h>
 #include <toolchain.h>
+#include <arch/common/sys_bitops.h>
 #include <arch/common/sys_io.h>
 #include <arch/common/ffs.h>
 #include <sw_isr_table.h>
@@ -27,7 +28,11 @@
 #include <xtensa/config/core.h>
 #include <arch/common/addr_types.h>
 
+#ifdef CONFIG_KERNEL_COHERENCE
+#define ARCH_STACK_PTR_ALIGN XCHAL_DCACHE_LINESIZE
+#else
 #define ARCH_STACK_PTR_ALIGN 16
+#endif
 
 /* Xtensa GPRs are often designated by two different names */
 #define sys_define_gpr_with_alias(name1, name2) union { uint32_t name1, name2; }
@@ -47,15 +52,15 @@ extern void z_irq_priority_set(uint32_t irq, uint32_t prio, uint32_t flags);
 }
 
 /* Spurious interrupt handler. Throws an error if called */
-extern void z_irq_spurious(void *unused);
+extern void z_irq_spurious(const void *unused);
 
 #define XTENSA_ERR_NORET
 
-extern uint32_t z_timer_cycle_get_32(void);
+extern uint32_t sys_clock_cycle_get_32(void);
 
 static inline uint32_t arch_k_cycle_get_32(void)
 {
-	return z_timer_cycle_get_32();
+	return sys_clock_cycle_get_32();
 }
 
 static ALWAYS_INLINE void arch_nop(void)

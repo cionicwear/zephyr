@@ -37,9 +37,6 @@ More information about the board can be found at the
 `nRF9160 DK website`_. The `Nordic Semiconductor Infocenter`_
 contains the processor's information and the datasheet.
 
-.. note::
-
-   In previous Zephyr releases this board was named *nrf9160_pca10090*.
 
 Hardware
 ********
@@ -86,6 +83,31 @@ hardware features:
 | WDT       | on-chip    | watchdog             |
 +-----------+------------+----------------------+
 
+.. _nrf9160dk_additional_hardware:
+
+Additional hardware in v0.14.0+
+-------------------------------
+
+Starting from v0.14.0, additional hardware is available on the DK:
+
+* External flash memory (MX25R6435F, 64 Mb)
+* I/O expander (PCAL6408A) that can be used to interface LEDs, slide switches,
+  and buttons
+
+To use this additional hardware, specify the revision of the board that
+should be used when building your application (for more information, see
+:ref:`application_board_version`). For example, to build for nRF9160 DK v1.0.0:
+
+.. zephyr-app-commands::
+   :tool: all
+   :cd-into:
+   :board: nrf9160dk_nrf9160@1.0.0
+   :goals: build
+   :compact:
+
+Remember to also enable routing for this additional hardware in the firmware for
+:ref:`nrf9160dk_nrf52840` (see :ref:`nrf9160dk_board_controller_firmware`).
+
 Other hardware features are not supported by the Zephyr kernel.
 See `nRF9160 DK website`_ and `Nordic Semiconductor Infocenter`_
 for a complete list of nRF9160 DK board hardware features.
@@ -126,15 +148,51 @@ Programming and Debugging
 nrf9160dk_nrf9160 supports the Armv8m Security Extension, and by default boots
 in the Secure state.
 
-Building Secure/Non-Secure Zephyr applications
-==============================================
+Building Secure/Non-Secure Zephyr applications with Arm |reg| TrustZone |reg|
+=============================================================================
+
+Applications on the nRF9160 may contain a Secure and a Non-Secure firmware
+image. The Secure image can be built using either Zephyr or
+`Trusted Firmware M`_ (TF-M). Non-Secure firmware images are always built
+using Zephyr. The two alternatives are described below.
+
+.. note::
+
+   By default the Secure image for nRF9160 is built using TF-M.
+
+Building the Secure firmware using Zephyr
+-----------------------------------------
 
 The process requires the following steps:
 
 1. Build the Secure Zephyr application using ``-DBOARD=nrf9160dk_nrf9160`` and
-   ``CONFIG_TRUSTED_EXECUTION_SECURE=y`` in the the application project configuration file.
-2. Build the Non-Secure Zephyr application using ``-DBOARD=nrf9160dk_nrf9160ns``.
+   ``CONFIG_TRUSTED_EXECUTION_SECURE=y`` in the application project configuration file.
+2. Build the Non-Secure Zephyr application using ``-DBOARD=nrf9160dk_nrf9160_ns``.
 3. Merge the two binaries together.
+
+Building the Secure firmware with TF-M
+--------------------------------------
+
+The process to build the Secure firmware image using TF-M and the Non-Secure
+firmware image using Zephyr requires the following action:
+
+1. Build the Non-Secure Zephyr application
+   using ``-DBOARD=nrf9160dk_nrf9160_ns``.
+   To invoke the building of TF-M the Zephyr build system requires the
+   Kconfig option ``BUILD_WITH_TFM`` to be enabled, which is done by
+   default when building Zephyr as a Non-Secure application.
+   The Zephyr build system will perform the following steps automatically:
+
+      * Build the Non-Secure firmware image as a regular Zephyr application
+      * Build a TF-M (secure) firmware image
+      * Merge the output binaries together
+      * Optionally build a bootloader image (MCUboot)
+
+.. note::
+
+   Depending on the TF-M configuration, an application DTS overlay may be
+   required, to adjust the Non-Secure image Flash and SRAM starting address
+   and sizes.
 
 When building a Secure/Non-Secure application, the Secure application will
 have to set the IDAU (SPU) configuration to allow Non-Secure access to all
@@ -204,3 +262,4 @@ References
    https://developer.arm.com/docs/100690/latest/attribution-units-sau-and-idau
 .. _nRF9160 DK website: https://www.nordicsemi.com/Software-and-Tools/Development-Kits/nRF9160-DK
 .. _Nordic Semiconductor Infocenter: https://infocenter.nordicsemi.com
+.. _Trusted Firmware M: https://www.trustedfirmware.org/projects/tf-m/

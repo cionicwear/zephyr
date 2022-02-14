@@ -22,6 +22,7 @@ This sample application supports the following mcumgr transports by default:
     * ``img_mgmt``
     * ``os_mgmt``
     * ``stat_mgmt``
+    * ``shell_mgmt``
 
 Caveats
 *******
@@ -109,7 +110,7 @@ Zephyr. The ``smp_svr`` sample comes in different flavours.
 
    .. group-tab:: Serial
 
-      To build the serial sample with file-system support:
+      To build the serial sample with file-system and shell management support:
 
       .. code-block:: console
 
@@ -117,7 +118,31 @@ Zephyr. The ``smp_svr`` sample comes in different flavours.
             -b frdm_k64f \
             samples/subsys/mgmt/mcumgr/smp_svr \
             -- \
-            -DOVERLAY_CONFIG='overlay-serial.conf;overlay-fs.conf'
+            -DOVERLAY_CONFIG='overlay-serial.conf;overlay-fs.conf;overlay-shell-mgmt.conf'
+
+   .. group-tab:: USB CDC_ACM
+
+      To build the serial sample with USB CDC_ACM backend:
+
+      .. code-block:: console
+
+         west build \
+            -b nrf52840dk_nrf52840 \
+            samples/subsys/mgmt/mcumgr/smp_svr \
+            -- \
+            -DOVERLAY_CONFIG=overlay-cdc.conf
+
+   .. group-tab:: Shell
+
+      To build the shell sample:
+
+      .. code-block:: console
+
+         west build \
+            -b frdm_k64f \
+            samples/subsys/mgmt/mcumgr/smp_svr \
+            -- \
+            -DOVERLAY_CONFIG='overlay-shell.conf'
 
    .. group-tab:: UDP
 
@@ -159,8 +184,7 @@ Flashing the sample image
 *************************
 
 Upload the :file:`zephyr.signed.bin` file from the previous to image slot-0 of your
-board.  The location of image slot-0 varies by board, as described in
-:ref:`mcuboot_partitions`.
+board.  See :ref:`flash_map_api` for details on flash partitioning.
 
 To upload the initial image file to an empty slot-0, we simply use ``west flash``
 like normal. ``west flash`` will automatically detect slot-0 address and confirm
@@ -187,6 +211,13 @@ send a string to the remote target device and have it echo it back:
       .. code-block:: console
 
          sudo mcumgr --conntype ble --connstring ctlr_name=hci0,peer_name='Zephyr' echo hello
+         hello
+
+   .. group-tab:: Shell
+
+      .. code-block:: console
+
+         mcumgr --conntype serial --connstring "/dev/ttyACM0,baud=115200" echo hello
          hello
 
    .. group-tab:: UDP
@@ -231,6 +262,38 @@ The general sequence of a DFU process is as follows:
 * Mark the uploaded image for testing using :file:`mcumgr`
 * Reset the device remotely using :file:`mcumgr`
 * Confirm the uploaded image using :file:`mcumgr` (optional)
+
+Direct image upload and Image mapping to MCUboot slot
+=====================================================
+
+Currently the mcumgr supports, for direct upload, 4 target images, of which first two are mapped
+into MCUboot primary (slot-0) and secondary (slot-1) respectively.
+
+The mcumgr ``image upload`` command may be provided optional ``-e -n <image>`` parameter that will
+select target image for upload; when parameter is no provided, 0 is assumed, which means "default
+behaviour", and it performs upload to the "image-1", the MCUboot secondary slot.
+
+For clarity, here is DTS label to slot to ``<image>`` translation table:
+
+    +-----------+--------+------------+
+    | DTS label | Slot   | -n <image> |
+    +===========+========+============+
+    | "image-0" | slot-0 |     1      |
+    +-----------+--------+------------+
+    | "image-1" | slot-1 |     0, 1   |
+    +-----------+--------+------------+
+    | "image-2" |        |     2      |
+    +-----------+--------+------------+
+    | "image-3" |        |     3      |
+    +-----------+--------+------------+
+
+.. note::
+
+   The ``-e`` option actually means "no erase", and is provided to the mcumgr
+   to prevent it from sending erase command to target, before updating image.
+   The options is always needed when ``-n`` is used for image selection,
+   as the erase command is hardcoded to erase slot-1 ("image-1"),
+   regardless of which slot is uploaded at the time.
 
 Upload the signed image
 =======================
@@ -302,3 +365,16 @@ on the next reset unless the image is confirmed. To confirm the new image:
 Note that if you try to send the very same image that is already flashed in
 slot-0 then the procedure will not complete successfully since the hash values
 for both slots will be identical.
+
+Download file from File System
+******************************
+
+SMP server supports downloading files from File System on device via
+:file:`mcumgr`. This is useful with FS log backend, when files are stored in
+non-volatile memory. Build and flash both MCUboot and smp_svr applications and
+then use :file:`mcumgr` with :file:`download` command, e.g.:
+
+.. code-block:: console
+
+   mcumgr --conntype serial --connstring='dev=/dev/ttyACM0,baud=115200' \
+   fs download /lfs/log.0000 ~/log.txt

@@ -98,6 +98,12 @@ void ppp_change_phase(struct ppp_context *ctx, enum ppp_phase new_phase)
 	validate_phase_transition(ctx->phase, new_phase);
 
 	ctx->phase = new_phase;
+
+	if (ctx->phase == PPP_DEAD) {
+		ppp_mgmt_raise_phase_dead_event(ctx->iface);
+	} else if (ctx->phase == PPP_RUNNING) {
+		ppp_mgmt_raise_phase_running_event(ctx->iface);
+	}
 }
 
 const char *ppp_state_str(enum ppp_state state)
@@ -184,6 +190,12 @@ const char *ppp_proto2str(uint16_t proto)
 		return "IPCP";
 	case PPP_IPV6CP:
 		return "IPV6CP";
+	case PPP_PAP:
+		return "PAP";
+	case PPP_CHAP:
+		return "CHAP";
+	case PPP_EAP:
+		return "EAP";
 	}
 #else
 	ARG_UNUSED(proto);

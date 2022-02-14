@@ -29,8 +29,14 @@ K_THREAD_STACK_DEFINE(t2_stack, T2_STACK_SIZE);
 volatile int t2_count;
 volatile int sync_count = -1;
 
+static int main_thread_id;
+static int child_thread_id;
+volatile int rv;
+
 K_SEM_DEFINE(cpuid_sema, 0, 1);
 K_SEM_DEFINE(sema, 0, 1);
+static struct k_mutex smutex;
+static struct k_sem smp_sem;
 
 #define THREADS_NUM CONFIG_MP_NUM_CPUS
 
@@ -40,7 +46,7 @@ struct thread_info {
 	int priority;
 	int cpu_id;
 };
-static volatile struct thread_info tinfo[THREADS_NUM];
+static ZTEST_BMEM volatile struct thread_info tinfo[THREADS_NUM];
 static struct k_thread tthread[THREADS_NUM];
 static K_THREAD_STACK_ARRAY_DEFINE(tstack, THREADS_NUM, STACK_SIZE);
 
@@ -58,6 +64,20 @@ static int curr_cpu(void)
 /**
  * @brief Tests for SMP
  * @defgroup kernel_smp_tests SMP Tests
+ * @ingroup all_tests
+ * @{
+ * @}
+ */
+
+/**
+ * @defgroup kernel_smp_integration_tests SMP Tests
+ * @ingroup all_tests
+ * @{
+ * @}
+ */
+
+/**
+ * @defgroup kernel_smp_module_tests SMP Tests
  * @ingroup all_tests
  * @{
  * @}
@@ -462,19 +482,53 @@ static void thread_get_cpu_entry(void *p1, void *p2, void *p3)
 	/* loop forever to ensure running on this CPU */
 	while (1) {
 		k_busy_wait(DELAY_US);
-	};
+	}
 }
 
 /**
  * @brief Test get a pointer of CPU
  *
- * @ingroup kernel_smp_tests
+ * @ingroup kernel_smp_module_tests
  *
- * @details Architecture layer provides a mechanism to return a pointer to the
- * current kernel CPU record of the running CPU.
+ * @details
+ * Test Objective:
+ * - To verify architecture layer provides a mechanism to return a pointer to the
+ *   current kernel CPU record of the running CPU.
+ *   We call arch_curr_cpu() and get it's member, both in main and spwaned thread
+ *   speratively, and compare them. They shall be different in SMP enviornment.
  *
- * We call arch_curr_cpu() and get it's member, both in main and spwaned thread
- * speratively, and compare them. They shall be different in SMP enviornment.
+ * Testing techniques:
+ * - Interface testing, function and block box testing,
+ *   dynamic analysis and testing,
+ *
+ * Prerequisite Conditions:
+ * - CONFIG_SMP=y, and the HW platform must support SMP.
+ *
+ * Input Specifications:
+ * - N/A
+ *
+ * Test Procedure:
+ * -# In main thread, call arch_curr_cpu() to get it's member "id",then store it
+ *  into a variable thread_id.
+ * -# Spawn a thread t2, and pass the stored thread_id to it, then call
+ *  k_busy_wait() 50us to wait for thread run and won't be swapped out.
+ * -# In thread t2, call arch_curr_cpu() to get pointer of current cpu data. Then
+ *  check if it not NULL.
+ * -# Store the member id via accessing pointer of current cpu data to var cpu_id.
+ * -# Check if cpu_id is not equaled to bsp_id that we pass into thread.
+ * -# Call k_busy_wait() and loop forever.
+ * -# In main thread, terminate the thread t2 before exit.
+ *
+ * Expected Test Result:
+ * - The pointer of current cpu data that we got from function call is correct.
+ *
+ * Pass/Fail Criteria:
+ * - Successful if the check of step 3,5 are all passed.
+ * - Failure if one of the check of step 3,5 is failed.
+ *
+ * Assumptions and Constraints:
+ * - This test using for the platform that support SMP, in our current scenario
+ *   , only x86_64, arc and xtensa supported.
  *
  * @see arch_curr_cpu()
  */
@@ -504,24 +558,58 @@ void z_trace_sched_ipi(void)
 {
 	sched_ipi_has_called++;
 }
+#endif
 
 /**
  * @brief Test interprocessor interrupt
  *
- * @ingroup kernel_smp_tests
+ * @ingroup kernel_smp_integration_tests
  *
- * @details Architecture layer provides a mechanism to issue an interprocessor
- * interrupt to all other CPUs in the system that calls the scheduler IPI
- * handler.
+ * @details
+ * Test Objective:
+ * - To verify architecture layer provides a mechanism to issue an interprocessor
+ *   interrupt to all other CPUs in the system that calls the scheduler IPI.
+ *   We simply add a hook in z_sched_ipi(), in order to check if it has been
+ *   called once in another CPU except the caller, when arch_sched_ipi() is
+ *   called.
  *
- * We simply add a hook in z_sched_ipi(), in order to check if it has been
- * called once in another CPU except the caller, when arch_sched_ipi() is
- * called.
+ * Testing techniques:
+ * - Interface testing, function and block box testing,
+ *   dynamic analysis and testing
+ *
+ * Prerequisite Conditions:
+ * - CONFIG_SMP=y, and the HW platform must support SMP.
+ * - CONFIG_TRACE_SCHED_IPI=y was set.
+ *
+ * Input Specifications:
+ * - N/A
+ *
+ * Test Procedure:
+ * -# In main thread, given a global variable sched_ipi_has_called equaled zero.
+ * -# Call arch_sched_ipi() then sleep for 100ms.
+ * -# In z_sched_ipi() handler, increment the sched_ipi_has_called.
+ * -# In main thread, check the sched_ipi_has_called is not equaled to zero.
+ * -# Repeat step 1 to 4 for 3 times.
+ *
+ * Expected Test Result:
+ * - The pointer of current cpu data that we got from function call is correct.
+ *
+ * Pass/Fail Criteria:
+ * - Successful if the check of step 4 are all passed.
+ * - Failure if one of the check of step 4 is failed.
+ *
+ * Assumptions and Constraints:
+ * - This test using for the platform that support SMP, in our current scenario
+ *   , only x86_64 and arc supported.
  *
  * @see arch_sched_ipi()
  */
 void test_smp_ipi(void)
 {
+#ifndef CONFIG_TRACE_SCHED_IPI
+	ztest_test_skip();
+#endif
+
 	TC_PRINT("cpu num=%d", CONFIG_MP_NUM_CPUS);
 
 	for (int i = 0; i < 3 ; i++) {
@@ -541,12 +629,324 @@ void test_smp_ipi(void)
 				sched_ipi_has_called);
 	}
 }
-#else
-void test_smp_ipi(void)
+
+void k_sys_fatal_error_handler(unsigned int reason, const z_arch_esf_t *pEsf)
 {
-	ztest_test_skip();
+	static int trigger;
+
+	if (reason != K_ERR_KERNEL_OOPS) {
+		printk("wrong error reason\n");
+		k_fatal_halt(reason);
+	}
+
+	if (trigger == 0) {
+		child_thread_id = curr_cpu();
+		trigger++;
+	} else {
+		main_thread_id = curr_cpu();
+
+		/* Verify the fatal was happened on different core */
+		zassert_true(main_thread_id != child_thread_id,
+					"fatal on the same core");
+	}
 }
-#endif
+
+void entry_oops(void *p1, void *p2, void *p3)
+{
+	k_oops();
+	TC_ERROR("SHOULD NEVER SEE THIS\n");
+}
+
+/**
+ * @brief Test fatal error can be triggered on different core
+
+ * @details When CONFIG_SMP is enabled, on some multiprocessor
+ * platforms, exception can be triggered on different core at
+ * the same time.
+ *
+ * @ingroup kernel_common_tests
+ */
+void test_fatal_on_smp(void)
+{
+	/* Creat a child thread and trigger a crash */
+	k_thread_create(&t2, t2_stack, T2_STACK_SIZE, entry_oops,
+				      NULL, NULL, NULL,
+				      K_PRIO_PREEMPT(2), 0, K_NO_WAIT);
+
+	/* hold cpu and wait for thread trigger exception */
+	k_busy_wait(2000);
+
+	/* Manually trigger the crash in mainthread */
+	entry_oops(NULL, NULL, NULL);
+
+	/* should not be here */
+	ztest_test_fail();
+}
+
+static void workq_handler(struct k_work *work)
+{
+	child_thread_id = curr_cpu();
+}
+
+/**
+ * @brief Test system workq run on different core
+
+ * @details When macro CONFIG_SMP is enabled, workq can be run
+ * on different core.
+ *
+ * @ingroup kernel_common_tests
+ */
+void test_workq_on_smp(void)
+{
+	static struct k_work work;
+
+	k_work_init(&work, workq_handler);
+
+	/* submit work item on system workq */
+	k_work_submit(&work);
+
+	/* Wait for some time to let other core's thread run */
+	k_busy_wait(DELAY_US);
+
+	/* check work have finished */
+	zassert_equal(k_work_busy_get(&work), 0, NULL);
+
+	main_thread_id = curr_cpu();
+
+	/* Verify the ztest thread and system workq run on different core */
+	zassert_true(main_thread_id != child_thread_id,
+		"system workq run on the same core");
+}
+
+static void t1_mutex_lock(void *p1, void *p2, void *p3)
+{
+	/* t1 will get mutex first */
+	k_mutex_lock((struct k_mutex *)p1, K_FOREVER);
+
+	k_msleep(2);
+
+	k_mutex_unlock((struct k_mutex *)p1);
+}
+
+static void t2_mutex_lock(void *p1, void *p2, void *p3)
+{
+	zassert_equal(_current->base.global_lock_count, 0,
+			"thread global lock cnt %d is incorrect",
+			_current->base.global_lock_count);
+
+	k_mutex_lock((struct k_mutex *)p1, K_FOREVER);
+
+	zassert_equal(_current->base.global_lock_count, 0,
+			"thread global lock cnt %d is incorrect",
+			_current->base.global_lock_count);
+
+	k_mutex_unlock((struct k_mutex *)p1);
+
+	/**TESTPOINT: z_smp_release_global_lock() has been call during
+	 * context switch but global_lock_cnt has not been decrease
+	 * because no irq_lock() was called.
+	 */
+	zassert_equal(_current->base.global_lock_count, 0,
+			"thread global lock cnt %d is incorrect",
+			_current->base.global_lock_count);
+}
+
+/**
+ * @brief Test scenairo that a thread release the global lock
+ *
+ * @ingroup kernel_smp_tests
+ *
+ * @details Validate the scenario that make the internal APIs of SMP
+ * z_smp_release_global_lock() to be called.
+ */
+void test_smp_release_global_lock(void)
+{
+	k_mutex_init(&smutex);
+
+	tinfo[0].tid =
+	k_thread_create(&tthread[0], tstack[0], STACK_SIZE,
+			(k_thread_entry_t)t1_mutex_lock,
+			&smutex, NULL, NULL,
+			K_PRIO_PREEMPT(5),
+			K_INHERIT_PERMS, K_NO_WAIT);
+
+	tinfo[1].tid =
+	k_thread_create(&tthread[1], tstack[1], STACK_SIZE,
+		(k_thread_entry_t)t2_mutex_lock,
+			&smutex, NULL, NULL,
+			K_PRIO_PREEMPT(3),
+			K_INHERIT_PERMS, K_MSEC(1));
+
+	/* Hold one of the cpu to ensure context switch as we wanted
+	 * can happen in another cpu.
+	 */
+	k_busy_wait(20000);
+
+	k_thread_join(tinfo[1].tid, K_FOREVER);
+	k_thread_join(tinfo[0].tid, K_FOREVER);
+	cleanup_resources();
+}
+
+#define LOOP_COUNT 20000
+
+enum sync_t {
+	LOCK_IRQ,
+	LOCK_SEM,
+	LOCK_MUTEX
+};
+
+static int global_cnt;
+static struct k_mutex smp_mutex;
+
+static void (*sync_lock)(void *);
+static void (*sync_unlock)(void *);
+
+static void sync_lock_dummy(void *k)
+{
+	/* no sync lock used */
+}
+
+static void sync_lock_irq(void *k)
+{
+	*((unsigned int *)k) = irq_lock();
+}
+
+static void sync_unlock_irq(void *k)
+{
+	irq_unlock(*(unsigned int *)k);
+}
+
+static void sync_lock_sem(void *k)
+{
+	k_sem_take(&smp_sem, K_FOREVER);
+}
+
+static void sync_unlock_sem(void *k)
+{
+	k_sem_give(&smp_sem);
+}
+
+static void sync_lock_mutex(void *k)
+{
+	k_mutex_lock(&smp_mutex, K_FOREVER);
+}
+
+static void sync_unlock_mutex(void *k)
+{
+	k_mutex_unlock(&smp_mutex);
+}
+
+static void sync_init(int lock_type)
+{
+	switch (lock_type) {
+	case LOCK_IRQ:
+		sync_lock = sync_lock_irq;
+		sync_unlock = sync_unlock_irq;
+		break;
+	case LOCK_SEM:
+		sync_lock = sync_lock_sem;
+		sync_unlock = sync_unlock_sem;
+		k_sem_init(&smp_sem, 1, 3);
+		break;
+	case LOCK_MUTEX:
+		sync_lock = sync_lock_mutex;
+		sync_unlock = sync_unlock_mutex;
+		k_mutex_init(&smp_mutex);
+		break;
+
+	default:
+		sync_lock = sync_unlock = sync_lock_dummy;
+	}
+}
+
+static void inc_global_cnt(void *a, void *b, void *c)
+{
+	int key;
+
+	for (int i = 0; i < LOOP_COUNT; i++) {
+
+		sync_lock(&key);
+
+		global_cnt++;
+		global_cnt--;
+		global_cnt++;
+
+		sync_unlock(&key);
+	}
+}
+
+static int run_concurrency(int type, void *func)
+{
+	uint32_t start_t, end_t;
+
+	sync_init(type);
+	global_cnt = 0;
+	start_t = k_cycle_get_32();
+
+	tinfo[0].tid =
+	k_thread_create(&tthread[0], tstack[0], STACK_SIZE,
+			(k_thread_entry_t)func,
+			NULL, NULL, NULL,
+			K_PRIO_PREEMPT(1),
+			K_INHERIT_PERMS, K_NO_WAIT);
+
+	tinfo[1].tid =
+	k_thread_create(&tthread[1], tstack[1], STACK_SIZE,
+			(k_thread_entry_t)func,
+			NULL, NULL, NULL,
+			K_PRIO_PREEMPT(1),
+			K_INHERIT_PERMS, K_NO_WAIT);
+
+	k_tid_t tid =
+	k_thread_create(&t2, t2_stack, T2_STACK_SIZE,
+			(k_thread_entry_t)func,
+			NULL, NULL, NULL,
+			K_PRIO_PREEMPT(1),
+			K_INHERIT_PERMS, K_NO_WAIT);
+
+	k_thread_join(tinfo[0].tid, K_FOREVER);
+	k_thread_join(tinfo[1].tid, K_FOREVER);
+	k_thread_join(tid, K_FOREVER);
+	cleanup_resources();
+
+	end_t =  k_cycle_get_32();
+
+	printk("type %d: cnt %d, spend %u ms\n", type, global_cnt,
+		k_cyc_to_ms_ceil32(end_t - start_t));
+
+	return global_cnt == (LOOP_COUNT * 3);
+}
+
+/**
+ * @brief Test if the concurrency of SMP works or not
+ *
+ * @ingroup kernel_smp_tests
+ *
+ * @details Validate the global lock and unlock API of SMP are thread-safe.
+ * We make 3 thread to increase the global count in differenet cpu and
+ * they both do locking then unlocking for LOOP_COUNT times. It shall be no
+ * deadlock happened and total global count shall be 3 * LOOP COUNT.
+ *
+ * We show the 4 kinds of scenairo:
+ * - No any lock used
+ * - Use global irq lock
+ * - Use semaphore
+ * - Use mutex
+ */
+void test_inc_concurrency(void)
+{
+	/* increasing global var with irq lock */
+	zassert_true(run_concurrency(LOCK_IRQ, inc_global_cnt),
+			"total count %d is wrong(i)", global_cnt);
+
+	/* increasing global var with irq lock */
+	zassert_true(run_concurrency(LOCK_SEM, inc_global_cnt),
+			"total count %d is wrong(s)", global_cnt);
+
+	/* increasing global var with irq lock */
+	zassert_true(run_concurrency(LOCK_MUTEX, inc_global_cnt),
+			"total count %d is wrong(M)", global_cnt);
+}
 
 void test_main(void)
 {
@@ -565,7 +965,11 @@ void test_main(void)
 			 ztest_unit_test(test_sleep_threads),
 			 ztest_unit_test(test_wakeup_threads),
 			 ztest_unit_test(test_smp_ipi),
-			 ztest_unit_test(test_get_cpu)
+			 ztest_unit_test(test_get_cpu),
+			 ztest_unit_test(test_fatal_on_smp),
+			 ztest_unit_test(test_workq_on_smp),
+			 ztest_unit_test(test_smp_release_global_lock),
+			 ztest_unit_test(test_inc_concurrency)
 			 );
 	ztest_run_test_suite(smp);
 }

@@ -54,7 +54,7 @@ struct stream_flash_ctx {
 	uint8_t *buf; /* Write buffer */
 	size_t buf_len; /* Length of write buffer */
 	size_t buf_bytes; /* Number of bytes currently stored in write buf */
-	struct device *fdev; /* Flash device */
+	const struct device *fdev; /* Flash device */
 	size_t bytes_written; /* Number of bytes written to flash */
 	size_t offset; /* Offset from base of flash device to write area */
 	size_t available; /* Available bytes in write area */
@@ -80,7 +80,7 @@ struct stream_flash_ctx {
  *
  * @return non-negative on success, negative errno code on fail
  */
-int stream_flash_init(struct stream_flash_ctx *ctx, struct device *fdev,
+int stream_flash_init(struct stream_flash_ctx *ctx, const struct device *fdev,
 		      uint8_t *buf, size_t buf_len, size_t offset, size_t size,
 		      stream_flash_callback_t cb);
 /**
@@ -127,6 +127,47 @@ int stream_flash_buffered_write(struct stream_flash_ctx *ctx, const uint8_t *dat
  * @return non-negative on success, negative errno code on fail
  */
 int stream_flash_erase_page(struct stream_flash_ctx *ctx, off_t off);
+
+/**
+ * @brief Load persistent stream write progress stored with key
+ *        @p settings_key .
+ *
+ * This function should be called directly after @ref stream_flash_init to
+ * load previous stream write progress before writing any data. If the loaded
+ * progress has fewer bytes written than @p ctx then it will be ignored.
+ *
+ * @param ctx context
+ * @param settings_key key to use with the settings module for loading
+ *                     the stream write progress
+ *
+ * @return non-negative on success, negative errno code on fail
+ */
+int stream_flash_progress_load(struct stream_flash_ctx *ctx,
+			       const char *settings_key);
+
+/**
+ * @brief Save persistent stream write progress using key @p settings_key .
+ *
+ * @param ctx context
+ * @param settings_key key to use with the settings module for storing
+ *                     the stream write progress
+ *
+ * @return non-negative on success, negative errno code on fail
+ */
+int stream_flash_progress_save(struct stream_flash_ctx *ctx,
+			       const char *settings_key);
+
+/**
+ * @brief Clear persistent stream write progress stored with key
+ *        @p settings_key .
+ *
+ * @param ctx context
+ * @param settings_key key previously used for storing the stream write progress
+ *
+ * @return non-negative on success, negative errno code on fail
+ */
+int stream_flash_progress_clear(struct stream_flash_ctx *ctx,
+				const char *settings_key);
 
 #ifdef __cplusplus
 }
