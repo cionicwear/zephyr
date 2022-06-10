@@ -33,12 +33,41 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 static struct device *hci_uart_dev;
 static K_THREAD_STACK_DEFINE(tx_thread_stack, CONFIG_BT_HCI_TX_STACK_SIZE);
 static struct k_thread tx_thread_data;
+static struct k_mutex uart_mutex;
 static K_FIFO_DEFINE(tx_queue);
 
 #define H4_CMD 0x01
 #define H4_ACL 0x02
 #define H4_SCO 0x03
 #define H4_EVT 0x04
+
+#define HCI_VENDOR_EVT			0xff
+#define HCI_VENDOR_LOG_LVL_LEN	1
+#define HCI_VENDOR_LOG_FTR_LEN	1
+
+#define LOG_INFO_LVL    	0x01
+#define LOG_WARN_LVL    	0x02
+#define LOG_ERR_LVL     	0x03
+#define LOG_FATAL_LVL   	0x04
+
+static bool hci_ready = false;
+
+#define HCI_UART_INFO(fmt, ...) { \
+	LOG_INF(fmt, ##__VA_ARGS__); \
+	hci_log(LOG_WARN_LVL, fmt, ##__VA_ARGS__); \
+}
+
+#define HCI_UART_WARN(fmt, ...) { \
+	LOG_WRN(fmt, ##__VA_ARGS__); \
+	hci_log(LOG_WARN_LVL, fmt, ##__VA_ARGS__); \
+}
+
+#define HCI_UART_ERR(fmt, ...) { \
+	LOG_ERR(fmt, ##__VA_ARGS__); \
+	hci_log(LOG_ERR_LVL, fmt, ##__VA_ARGS__); \
+}
+
+
 
 /* Length of a discard/flush buffer.
  * This is sized to align with a BLE HCI packet:
@@ -116,6 +145,7 @@ static void bt_uart_isr(struct device *unused)
 	static int remaining;
 
 	ARG_UNUSED(unused);
+	hci_ready = true;
 
 	while (uart_irq_update(hci_uart_dev) &&
 	       uart_irq_is_pending(hci_uart_dev)) {
@@ -138,7 +168,7 @@ static void bt_uart_isr(struct device *unused)
 			/* Get packet type */
 			read = h4_read(hci_uart_dev, &type, sizeof(type), 0);
 			if (read != sizeof(type)) {
-				LOG_WRN("Unable to read H4 packet type");
+				HCI_UART_WARN("Unable to read H4 packet type");
 				continue;
 			}
 
@@ -156,14 +186,14 @@ static void bt_uart_isr(struct device *unused)
 				h4_acl_recv(buf, &remaining);
 				break;
 			default:
-				LOG_ERR("Unknown H4 type %u", type);
+				HCI_UART_ERR("Unknown H4 type %u", type);
 				return;
 			}
 
 			LOG_DBG("need to get %u bytes", remaining);
 
 			if (remaining > net_buf_tailroom(buf)) {
-				LOG_ERR("Not enough space in buffer");
+				HCI_UART_ERR("Not enough space in buffer");
 				net_buf_unref(buf);
 				buf = NULL;
 			}
@@ -171,7 +201,7 @@ static void bt_uart_isr(struct device *unused)
 
 		if (!buf) {
 			read = h4_discard(hci_uart_dev, remaining);
-			LOG_WRN("Discarded %d bytes", read);
+			HCI_UART_WARN("Discarded %d bytes", read);
 			remaining -= read;
 			continue;
 		}
@@ -204,7 +234,7 @@ static void tx_thread(void *p1, void *p2, void *p3)
 		/* Pass buffer to the stack */
 		err = bt_send(buf);
 		if (err) {
-			LOG_ERR("Unable to send (err %d)", err);
+			HCI_UART_ERR("Unable to send (err %d)", err);
 			net_buf_unref(buf);
 		}
 
@@ -232,7 +262,6 @@ static int h4_send(struct net_buf *buf)
 #if defined(CONFIG_BT_CTLR_ASSERT_HANDLER)
 void bt_ctlr_assert_handle(char *file, uint32_t line)
 {
-	uint32_t len = 0U, pos = 0U;
 
 	/* Disable interrupts, this is unrecoverable */
 	(void)irq_lock();
@@ -240,41 +269,60 @@ void bt_ctlr_assert_handle(char *file, uint32_t line)
 	uart_irq_rx_disable(hci_uart_dev);
 	uart_irq_tx_disable(hci_uart_dev);
 
-	if (file) {
-		while (file[len] != '\0') {
-			if (file[len] == '/') {
-				pos = len + 1;
-			}
-			len++;
-		}
-		file += pos;
-		len -= pos;
-	}
-
-	uart_poll_out(hci_uart_dev, H4_EVT);
-	/* Vendor-Specific debug event */
-	uart_poll_out(hci_uart_dev, 0xff);
-	/* 0xAA + strlen + \0 + 32-bit line number */
-	uart_poll_out(hci_uart_dev, 1 + len + 1 + 4);
-	uart_poll_out(hci_uart_dev, 0xAA);
-
-	if (len) {
-		while (*file != '\0') {
-			uart_poll_out(hci_uart_dev, *file);
-			file++;
-		}
-		uart_poll_out(hci_uart_dev, 0x00);
-	}
-
-	uart_poll_out(hci_uart_dev, line >> 0 & 0xff);
-	uart_poll_out(hci_uart_dev, line >> 8 & 0xff);
-	uart_poll_out(hci_uart_dev, line >> 16 & 0xff);
-	uart_poll_out(hci_uart_dev, line >> 24 & 0xff);
-
+	hci_log(LOG_FATAL_LVL, "[%s:%d] - assert", file, line);
+	
 	while (1) {
 	}
 }
 #endif /* CONFIG_BT_CTLR_ASSERT_HANDLER */
+
+
+
+static void hci_log_send(uint8_t lvl, const char *msg)
+{
+	uint32_t len = strlen(msg);
+
+	uart_poll_out(hci_uart_dev, H4_EVT);
+	uart_poll_out(hci_uart_dev, HCI_VENDOR_EVT);
+	uart_poll_out(hci_uart_dev, len + HCI_VENDOR_LOG_LVL_LEN + HCI_VENDOR_LOG_FTR_LEN);
+	uart_poll_out(hci_uart_dev, lvl);
+
+	if (len) {
+		while (*msg != '\0') {
+			uart_poll_out(hci_uart_dev, *msg);
+			msg++;
+		}
+		uart_poll_out(hci_uart_dev, 0x00);
+	}
+}
+
+void hci_log(uint8_t lvl, const char *log, ...)
+{
+	va_list args;
+	char buf[255] = {0};
+	int len;
+
+	if(!hci_ready){
+		return;
+	}
+
+    va_start(args, log);
+    len = vsnprintf(buf, 255, log, args);
+    va_end(args);
+
+	k_mutex_lock(&uart_mutex, K_FOREVER);
+	hci_log_send(lvl, buf);
+	k_mutex_unlock(&uart_mutex);
+}
+
+static void test_thread(void *p1, void *p2, void *p3)
+{
+	while (1) {
+		k_sleep(K_MSEC(5000));
+		// hci_log_send("hello world!");
+		HCI_UART_ERR("test bluetooth error = %x - %d", 0x34, -2);
+	}
+}
 
 static int hci_uart_init(struct device *unused)
 {
@@ -337,20 +385,24 @@ void main(void)
 		}
 	}
 
+	k_mutex_init(&uart_mutex);
 	/* Spawn the TX thread and start feeding commands and data to the
 	 * controller
 	 */
 	k_thread_create(&tx_thread_data, tx_thread_stack,
 			K_THREAD_STACK_SIZEOF(tx_thread_stack), tx_thread,
 			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
+	
 
 	while (1) {
 		struct net_buf *buf;
 
 		buf = net_buf_get(&rx_queue, K_FOREVER);
+		k_mutex_lock(&uart_mutex, K_FOREVER);
 		err = h4_send(buf);
+		k_mutex_unlock(&uart_mutex);
 		if (err) {
-			LOG_ERR("Failed to send");
+			HCI_UART_ERR("Failed to send");
 		}
 	}
 }
