@@ -15,6 +15,13 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(wdt_gecko, CONFIG_WDT_LOG_LEVEL);
 
+#ifdef cmuClock_CORELE
+#define CLOCK_DEF(id) cmuClock_CORELE
+#else
+#define CLOCK_DEF(id) cmuClock_WDOG##id
+#endif /* cmuClock_CORELE */
+#define CLOCK_ID(id) CLOCK_DEF(id)
+
 /* Defines maximum WDOG_CTRL.PERSEL value which is used by the watchdog module
  * to select its timeout period.
  */
@@ -23,6 +30,7 @@ LOG_MODULE_REGISTER(wdt_gecko, CONFIG_WDT_LOG_LEVEL);
 /* Device constant configuration parameters */
 struct wdt_gecko_cfg {
 	WDOG_TypeDef *base;
+	CMU_Clock_TypeDef clock;
 	void (*irq_cfg_func)(void);
 };
 
@@ -34,9 +42,9 @@ struct wdt_gecko_data {
 
 #define DEV_NAME(dev) ((dev)->name)
 #define DEV_DATA(dev) \
-	((struct wdt_gecko_data *)(dev)->driver_data)
+	((struct wdt_gecko_data *)(dev)->data)
 #define DEV_CFG(dev) \
-	((const struct wdt_gecko_cfg *)(dev)->config_info)
+	((const struct wdt_gecko_cfg *)(dev)->config)
 
 static uint32_t wdt_gecko_get_timeout_from_persel(int perSel)
 {
@@ -83,7 +91,7 @@ static int wdt_gecko_convert_window(uint32_t window, uint32_t period)
 	return idx;
 }
 
-static int wdt_gecko_setup(struct device *dev, uint8_t options)
+static int wdt_gecko_setup(const struct device *dev, uint8_t options)
 {
 	const struct wdt_gecko_cfg *config = DEV_CFG(dev);
 	struct wdt_gecko_data *data = DEV_DATA(dev);
@@ -120,7 +128,7 @@ static int wdt_gecko_setup(struct device *dev, uint8_t options)
 	return 0;
 }
 
-static int wdt_gecko_disable(struct device *dev)
+static int wdt_gecko_disable(const struct device *dev)
 {
 	const struct wdt_gecko_cfg *config = DEV_CFG(dev);
 	struct wdt_gecko_data *data = DEV_DATA(dev);
@@ -133,7 +141,7 @@ static int wdt_gecko_disable(struct device *dev)
 	return 0;
 }
 
-static int wdt_gecko_install_timeout(struct device *dev,
+static int wdt_gecko_install_timeout(const struct device *dev,
 				     const struct wdt_timeout_cfg *cfg)
 {
 	struct wdt_gecko_data *data = DEV_DATA(dev);
@@ -206,7 +214,7 @@ static int wdt_gecko_install_timeout(struct device *dev,
 	return 0;
 }
 
-static int wdt_gecko_feed(struct device *dev, int channel_id)
+static int wdt_gecko_feed(const struct device *dev, int channel_id)
 {
 	const struct wdt_gecko_cfg *config = DEV_CFG(dev);
 	WDOG_TypeDef *wdog = config->base;
@@ -222,9 +230,8 @@ static int wdt_gecko_feed(struct device *dev, int channel_id)
 	return 0;
 }
 
-static void wdt_gecko_isr(void *arg)
+static void wdt_gecko_isr(const struct device *dev)
 {
-	struct device *dev = (struct device *)arg;
 	const struct wdt_gecko_cfg *config = DEV_CFG(dev);
 	struct wdt_gecko_data *data = DEV_DATA(dev);
 	WDOG_TypeDef *wdog = config->base;
@@ -239,7 +246,7 @@ static void wdt_gecko_isr(void *arg)
 	}
 }
 
-static int wdt_gecko_init(struct device *dev)
+static int wdt_gecko_init(const struct device *dev)
 {
 	const struct wdt_gecko_cfg *config = DEV_CFG(dev);
 
@@ -251,8 +258,12 @@ static int wdt_gecko_init(struct device *dev)
 	/* Enable ULFRCO (1KHz) oscillator */
 	CMU_OscillatorEnable(cmuOsc_ULFRCO, true, false);
 
+#if !defined(_SILICON_LABS_32B_SERIES_2)
 	/* Ensure LE modules are clocked */
-	CMU_ClockEnable(cmuClock_CORELE, true);
+	CMU_ClockEnable(config->clock, true);
+#else
+	CMU_ClockSelectSet(config->clock, cmuSelect_ULFRCO);
+#endif
 
 	/* Enable IRQs */
 	config->irq_cfg_func();
@@ -276,13 +287,14 @@ static const struct wdt_driver_api wdt_gecko_driver_api = {
 	static const struct wdt_gecko_cfg wdt_gecko_cfg_##index = {	\
 		.base = (WDOG_TypeDef *)				\
 			DT_INST_REG_ADDR(index),\
+		.clock = CLOCK_ID(DT_INST_PROP(index, peripheral_id)),  \
 		.irq_cfg_func = wdt_gecko_cfg_func_##index,		\
 	};								\
 	static struct wdt_gecko_data wdt_gecko_data_##index;		\
 									\
-	DEVICE_AND_API_INIT(wdt_##index,				\
-				DT_INST_LABEL(index),\
-				&wdt_gecko_init, &wdt_gecko_data_##index,\
+	DEVICE_DT_INST_DEFINE(index,					\
+				&wdt_gecko_init, NULL,			\
+				&wdt_gecko_data_##index,		\
 				&wdt_gecko_cfg_##index, POST_KERNEL,	\
 				CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,	\
 				&wdt_gecko_driver_api);			\
@@ -291,7 +303,7 @@ static const struct wdt_driver_api wdt_gecko_driver_api = {
 	{								\
 		IRQ_CONNECT(DT_INST_IRQN(index),	\
 			DT_INST_IRQ(index, priority),\
-			wdt_gecko_isr, DEVICE_GET(wdt_##index), 0);	\
+			wdt_gecko_isr, DEVICE_DT_INST_GET(index), 0);	\
 		irq_enable(DT_INST_IRQN(index));	\
 	}
 

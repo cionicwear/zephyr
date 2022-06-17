@@ -35,9 +35,6 @@ More information about the board can be found at the
 `nRF52840 Dongle website`_. The `Nordic Semiconductor Infocenter`_
 contains the processor's information and the datasheet.
 
-.. note::
-
-   In previous Zephyr releases this board was named *nrf52840_pca10059*.
 
 Hardware
 ********
@@ -267,7 +264,7 @@ name.
 .. note::
 
    This board supports building other Zephyr applications for flashing with
-   MCUboot in this way also. Just make sure :option:`CONFIG_BOOTLOADER_MCUBOOT`
+   MCUboot in this way also. Just make sure :kconfig:`CONFIG_BOOTLOADER_MCUBOOT`
    is set when building your application. For example, to compile blinky for
    loading by MCUboot, use this:
 

@@ -117,6 +117,40 @@ extern "C" {
 #define DT_SPI_DEV_HAS_CS_GPIOS(spi_dev) DT_SPI_HAS_CS_GPIOS(DT_BUS(spi_dev))
 
 /**
+ * @brief Get a SPI device's chip select GPIO controller's node identifier
+ *
+ * Example devicetree fragment:
+ *
+ *     gpio1: gpio@... { ... };
+ *
+ *     gpio2: gpio@... { ... };
+ *
+ *     spi@... {
+ *             compatible = "vnd,spi";
+ *             cs-gpios = <&gpio1 10 GPIO_ACTIVE_LOW>,
+ *                        <&gpio2 20 GPIO_ACTIVE_LOW>;
+ *
+ *             a: spi-dev-a@0 {
+ *                     reg = <0>;
+ *             };
+ *
+ *             b: spi-dev-b@1 {
+ *                     reg = <1>;
+ *             };
+ *     };
+ *
+ * Example usage:
+ *
+ *     DT_SPI_DEV_CS_GPIOS_CTLR(DT_NODELABEL(a)) // DT_NODELABEL(gpio1)
+ *     DT_SPI_DEV_CS_GPIOS_CTLR(DT_NODELABEL(b)) // DT_NODELABEL(gpio2)
+ *
+ * @param spi_dev a SPI device node identifier
+ * @return node identifier for spi_dev's chip select GPIO controller
+ */
+#define DT_SPI_DEV_CS_GPIOS_CTLR(spi_dev) \
+	DT_GPIO_CTLR_BY_IDX(DT_BUS(spi_dev), cs_gpios, DT_REG_ADDR(spi_dev))
+
+/**
  * @brief Get a SPI device's chip select GPIO controller's label property
  *
  * Example devicetree fragment:
@@ -190,9 +224,6 @@ extern "C" {
 /**
  * @brief Get a SPI device's chip select GPIO flags
  *
- * It's an error if the GPIO specifier for spi_dev's entry in its
- * bus node's cs-gpios property has no flags cell.
- *
  * Example devicetree fragment:
  *
  *     spi1: spi@... {
@@ -208,8 +239,12 @@ extern "C" {
  *
  *     DT_SPI_DEV_CS_GPIOS_FLAGS(DT_NODELABEL(a)) // GPIO_ACTIVE_LOW
  *
+ * If the GPIO specifier for spi_dev's entry in its bus node's
+ * cs-gpios property has no flags cell, this expands to zero.
+ *
  * @param spi_dev a SPI device node identifier
- * @return flags value of spi_dev's chip select GPIO specifier
+ * @return flags value of spi_dev's chip select GPIO specifier, or
+ *         zero if there is none
  */
 #define DT_SPI_DEV_CS_GPIOS_FLAGS(spi_dev) \
 	DT_GPIO_FLAGS_BY_IDX(DT_BUS(spi_dev), cs_gpios, DT_REG_ADDR(spi_dev))
@@ -223,6 +258,16 @@ extern "C" {
  */
 #define DT_INST_SPI_DEV_HAS_CS_GPIOS(inst) \
 	DT_SPI_DEV_HAS_CS_GPIOS(DT_DRV_INST(inst))
+
+/**
+ * @brief Get GPIO controller node identifier for a SPI device instance
+ * This is equivalent to DT_SPI_DEV_CS_GPIOS_CTLR(DT_DRV_INST(inst)).
+ * @param inst DT_DRV_COMPAT instance number
+ * @return node identifier for instance's chip select GPIO controller
+ * @see DT_SPI_DEV_CS_GPIOS_CTLR()
+ */
+#define DT_INST_SPI_DEV_CS_GPIOS_CTLR(inst) \
+	DT_SPI_DEV_CS_GPIOS_CTLR(DT_DRV_INST(inst))
 
 /**
  * @brief Get GPIO controller name for a SPI device instance
@@ -246,7 +291,8 @@ extern "C" {
 /**
  * @brief DT_SPI_DEV_CS_GPIOS_FLAGS(DT_DRV_INST(inst)).
  * @param inst DT_DRV_COMPAT instance number
- * @return flags value of the instance's chip select GPIO specifier
+ * @return flags value of the instance's chip select GPIO specifier,
+ *         or zero if there is none
  * @see DT_SPI_DEV_CS_GPIOS_FLAGS()
  */
 #define DT_INST_SPI_DEV_CS_GPIOS_FLAGS(inst) \

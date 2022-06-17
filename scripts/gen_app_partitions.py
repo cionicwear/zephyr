@@ -34,11 +34,13 @@ found, into data and BSS for each partition.
 
 import sys
 import argparse
+import json
 import os
 import re
 from collections import OrderedDict
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
+import elftools.common.exceptions
 
 SZ = 'size'
 SRC = 'sources'
@@ -52,7 +54,7 @@ data_template = """
 		/* Auto generated code do not modify */
 		SMEM_PARTITION_ALIGN(z_data_smem_{0}_bss_end - z_data_smem_{0}_part_start);
 		z_data_smem_{0}_part_start = .;
-		KEEP(*(data_smem_{0}_data))
+		KEEP(*(data_smem_{0}_data*))
 """
 
 library_data_template = """
@@ -61,7 +63,7 @@ library_data_template = """
 
 bss_template = """
 		z_data_smem_{0}_bss_start = .;
-		KEEP(*(data_smem_{0}_bss))
+		KEEP(*(data_smem_{0}_bss*))
 """
 
 library_bss_template = """
@@ -75,16 +77,24 @@ footer_template = """
 """
 
 linker_start_seq = """
-	SECTION_PROLOGUE(_APP_SMEM_SECTION_NAME,,)
-	{
+	SECTION_PROLOGUE(_APP_SMEM{1}_SECTION_NAME,,)
+	{{
 		APP_SHARED_ALIGN;
-		_app_smem_start = .;
+		_app_smem{0}_start = .;
 """
 
 linker_end_seq = """
 		APP_SHARED_ALIGN;
-		_app_smem_end = .;
-	} GROUP_DATA_LINK_IN(RAMABLE_REGION, ROMABLE_REGION)
+		_app_smem{0}_end = .;
+	}} GROUP_DATA_LINK_IN(RAMABLE_REGION, ROMABLE_REGION)
+"""
+
+empty_app_smem = """
+	SECTION_PROLOGUE(_APP_SMEM{1}_SECTION_NAME,,)
+	{{
+		_app_smem{0}_start = .;
+		_app_smem{0}_end = .;
+	}} GROUP_DATA_LINK_IN(RAMABLE_REGION, ROMABLE_REGION)
 """
 
 size_cal_string = """
@@ -92,13 +102,17 @@ size_cal_string = """
 	z_data_smem_{0}_bss_size = z_data_smem_{0}_bss_end - z_data_smem_{0}_bss_start;
 """
 
-section_regex = re.compile(r'data_smem_([A-Za-z0-9_]*)_(data|bss)')
+section_regex = re.compile(r'data_smem_([A-Za-z0-9_]*)_(data|bss)*')
 
 elf_part_size_regex = re.compile(r'z_data_smem_(.*)_part_size')
 
 def find_obj_file_partitions(filename, partitions):
     with open(filename, 'rb') as f:
-        full_lib = ELFFile(f)
+        try:
+            full_lib = ELFFile(f)
+        except elftools.common.exceptions.ELFError as e:
+            exit(f"Error: {filename}: {e}")
+
         if not full_lib:
             sys.exit("Error parsing file: " + filename)
 
@@ -128,12 +142,37 @@ def parse_obj_files(partitions):
         for filename in files:
             if re.match(r".*\.obj$", filename):
                 fullname = os.path.join(dirpath, filename)
-                find_obj_file_partitions(fullname, partitions)
+                fsize = os.path.getsize(fullname)
+                if fsize != 0:
+                    find_obj_file_partitions(fullname, partitions)
+
+
+def parse_compile_command_file(partitions):
+    # Iterate over all entries to find object files.
+    # Thereafter process each object file to find partitions
+    object_pattern = re.compile(r'-o\s+(\S*)')
+    with open(args.compile_commands_file, 'rb') as f:
+        commands = json.load(f)
+        for command in commands:
+            build_dir = command.get('directory')
+            compile_command = command.get('command')
+            compile_arg = object_pattern.search(compile_command)
+            obj_file = None if compile_arg is None else compile_arg.group(1)
+            if obj_file:
+                fullname = os.path.join(build_dir, obj_file)
+                # Because of issue #40635, then not all objects referenced by
+                # the compile_commands.json file may be available, therefore
+                # only include existing files.
+                if os.path.exists(fullname):
+                    find_obj_file_partitions(fullname, partitions)
 
 
 def parse_elf_file(partitions):
     with open(args.elf, 'rb') as f:
-        elffile = ELFFile(f)
+        try:
+            elffile = ELFFile(f)
+        except elftools.common.exceptions.ELFError as e:
+            exit(f"Error: {args.elf}: {e}")
 
         symbol_tbls = [s for s in elffile.iter_sections()
                        if isinstance(s, SymbolTableSection)]
@@ -159,23 +198,29 @@ def parse_elf_file(partitions):
                     partitions[partition_name][SZ] += size
 
 
-def generate_final_linker(linker_file, partitions):
-    string = linker_start_seq
-    size_string = ''
-    for partition, item in partitions.items():
-        string += data_template.format(partition)
-        if LIB in item:
-            for lib in item[LIB]:
-                string += library_data_template.format(lib)
-        string += bss_template.format(partition)
-        if LIB in item:
-            for lib in item[LIB]:
-                string += library_bss_template.format(lib)
-        string += footer_template.format(partition)
-        size_string += size_cal_string.format(partition)
+def generate_final_linker(linker_file, partitions, lnkr_sect=""):
+    string = ""
 
-    string += linker_end_seq
-    string += size_string
+    if len(partitions) > 0:
+        string = linker_start_seq.format(lnkr_sect, lnkr_sect.upper())
+        size_string = ''
+        for partition, item in partitions.items():
+            string += data_template.format(partition)
+            if LIB in item:
+                for lib in item[LIB]:
+                    string += library_data_template.format(lib)
+            string += bss_template.format(partition, lnkr_sect)
+            if LIB in item:
+                for lib in item[LIB]:
+                    string += library_bss_template.format(lib)
+            string += footer_template.format(partition)
+            size_string += size_cal_string.format(partition)
+
+        string += linker_end_seq.format(lnkr_sect)
+        string += size_string
+    else:
+        string = empty_app_smem.format(lnkr_sect, lnkr_sect.upper())
+
     with open(linker_file, "w") as fw:
         fw.write(string)
 
@@ -189,6 +234,8 @@ def parse_args():
                         help="Root build directory")
     parser.add_argument("-e", "--elf", required=False, default=None,
                         help="ELF file")
+    parser.add_argument("-f", "--compile-commands-file", required=False,
+                        default=None, help="CMake compile commands file")
     parser.add_argument("-o", "--output", required=False,
                         help="Output ld file")
     parser.add_argument("-v", "--verbose", action="count", default=0,
@@ -196,6 +243,10 @@ def parse_args():
     parser.add_argument("-l", "--library", nargs=2, action="append", default=[],
                         metavar=("LIBRARY", "PARTITION"),
                         help="Include globals for a particular library or object filename into a designated partition")
+    parser.add_argument("--pinoutput", required=False,
+                        help="Output ld file for pinned sections")
+    parser.add_argument("--pinpartitions", action="store", required=False, default="",
+                        help="Comma separated names of partitions to be pinned in physical memory")
 
     args = parser.parse_args()
 
@@ -206,6 +257,8 @@ def main():
 
     if args.directory is not None:
         parse_obj_files(partitions)
+    if args.compile_commands_file is not None:
+        parse_compile_command_file(partitions)
     elif args.elf is not None:
         parse_elf_file(partitions)
     else:
@@ -220,11 +273,20 @@ def main():
         else:
             partitions[ptn][LIB].append(lib)
 
+    if args.pinoutput:
+        pin_part_names = args.pinpartitions.split(',')
+
+        generic_partitions = {key: value for key, value in partitions.items()
+                              if key not in pin_part_names}
+        pinned_partitions = {key: value for key, value in partitions.items()
+                             if key in pin_part_names}
+    else:
+        generic_partitions = partitions
 
     # Sample partitions.items() list before sorting:
     #   [ ('part1', {'size': 64}), ('part3', {'size': 64}, ...
     #     ('part0', {'size': 334}) ]
-    decreasing_tuples = sorted(partitions.items(),
+    decreasing_tuples = sorted(generic_partitions.items(),
                            key=lambda x: (x[1][SZ], x[0]), reverse=True)
 
     partsorted = OrderedDict(decreasing_tuples)
@@ -236,6 +298,20 @@ def main():
             print("    {0}: size {1}: {2}".format(key,
                                                   partsorted[key][SZ],
                                                   partsorted[key][SRC]))
+
+    if args.pinoutput:
+        decreasing_tuples = sorted(pinned_partitions.items(),
+                                   key=lambda x: (x[1][SZ], x[0]), reverse=True)
+
+        partsorted = OrderedDict(decreasing_tuples)
+
+        generate_final_linker(args.pinoutput, partsorted, lnkr_sect="_pinned")
+        if args.verbose:
+            print("Pinned partitions retrieved:")
+            for key in partsorted:
+                print("    {0}: size {1}: {2}".format(key,
+                                                    partsorted[key][SZ],
+                                                    partsorted[key][SRC]))
 
 
 if __name__ == '__main__':

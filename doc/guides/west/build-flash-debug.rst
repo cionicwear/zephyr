@@ -141,22 +141,24 @@ Pristine Builds
 A *pristine* build directory is essentially a new build directory. All
 byproducts from previous builds have been removed.
 
-To have ``west build`` make the build directory pristine before re-running
-CMake to generate a build system, use the ``--pristine`` (or ``-p``)
-option. For example, to switch board and application (which requires a pristine
-build directory) in one command::
+To force ``west build`` make the build directory pristine before re-running
+CMake to generate a build system, use the ``--pristine=always`` (or
+``-p=always``) option.
 
-  west build -b qemu_x86 samples/philosophers
+Giving ``--pristine`` or ``-p`` without a value has the same effect as giving
+it the value ``always``. For example, these commands are equivalent::
+
   west build -p -b reel_board samples/hello_world
+  west build -p=always -b reel_board samples/hello_world
 
-To let west decide for you if a pristine build is needed, use ``-p auto``::
-
-  west build -p auto -b reel_board samples/hello_world
+By default, ``west build`` applies a heuristic to detect if the build directory
+needs to be made pristine. This is the same as using ``--pristine=auto``.
 
 .. tip::
 
-   You can run ``west config build.pristine auto`` to make this setting
-   permanent.
+   You can run ``west config build.pristine always`` to always do a pristine
+   build, or ``west config build.pristine never`` to disable the heuristic.
+   See the ``west build`` :ref:`west-building-config` for details.
 
 .. _west-building-verbose:
 
@@ -277,6 +279,38 @@ more details.
 .. _set() command:
    https://cmake.org/cmake/help/latest/command/set.html
 
+Build tool arguments
+--------------------
+
+Use ``-o`` to pass options to the underlying build tool.
+
+This works with both ``ninja`` (:ref:`the default <west-building-generator>`)
+and ``make`` based build systems.
+
+For example, to pass ``-dexplain`` to ``ninja``::
+
+  west build -o=-dexplain
+
+As another example, to pass ``--keep-going`` to ``make``::
+
+  west build -o=--keep-going
+
+Note that using ``-o=--foo`` instead of ``-o --foo`` is required to prevent
+``--foo`` from being treated as a ``west build`` option.
+
+Build parallelism
+-----------------
+
+By default, ``ninja`` uses all of your cores to build, while ``make`` uses only
+one. You can control this explicitly with the ``-j`` option supported by both
+tools.
+
+For example, to build with 4 cores::
+
+  west build -o=-j4
+
+The ``-o`` option is described further in the previous section.
+
 .. _west-building-config:
 
 Configuration Options
@@ -379,6 +413,19 @@ the default with::
 
   west flash --runner jlink
 
+You can override the default flash runner at build time by using the
+``BOARD_FLASH_RUNNER`` CMake variable, and the debug runner with
+``BOARD_DEBUG_RUNNER``.
+
+For example::
+
+  # Set the default runner to "jlink", overriding the board's
+  # usual default.
+  west build [...] -- -DBOARD_FLASH_RUNNER=jlink
+
+See :ref:`west-building-cmake-args` and :ref:`west-building-cmake-config` for
+more information on setting CMake arguments.
+
 See :ref:`west-runner` below for more information on the ``runner``
 library used by West. The list of runners which support flashing can
 be obtained with ``west flash -H``; if run from a build directory or
@@ -390,14 +437,14 @@ Configuration Overrides
 
 The CMake cache contains default values West uses while flashing, such
 as where the board directory is on the file system, the path to the
-kernel binaries to flash in several formats, and more. You can
+zephyr binaries to flash in several formats, and more. You can
 override any of this configuration at runtime with additional options.
 
 For example, to override the HEX file containing the Zephyr image to
 flash (assuming your runner expects a HEX file), but keep other
 flash configuration at default values::
 
-  west flash --kernel-hex path/to/some/other.hex
+  west flash --hex-file path/to/some/other.hex
 
 The ``west flash -h`` output includes a complete list of overrides
 supported by all runners.
@@ -487,15 +534,15 @@ Configuration Overrides
 
 The CMake cache contains default values West uses for debugging, such
 as where the board directory is on the file system, the path to the
-kernel binaries containing symbol tables, and more. You can override
+zephyr binaries containing symbol tables, and more. You can override
 any of this configuration at runtime with additional options.
 
 For example, to override the ELF file containing the Zephyr binary and
 symbol tables (assuming your runner expects an ELF file), but keep
 other debug configuration at default values::
 
-  west debug --kernel-elf path/to/some/other.elf
-  west debugserver --kernel-elf path/to/some/other.elf
+  west debug --elf-file path/to/some/other.elf
+  west debugserver --elf-file path/to/some/other.elf
 
 The ``west debug -h`` output includes a complete list of overrides
 supported by all runners.
@@ -531,35 +578,20 @@ For example, to print usage information about the ``jlink`` runner::
 
 .. _west-runner:
 
-runners package API
-*******************
+Flash and debug runners
+***********************
 
-The flash and debug commands are implemented as west *extension
-commands*: that is, they are west commands whose source code lives
-outside the west repository. Some reasons this choice was made are:
+The flash and debug commands use Python wrappers around various
+:ref:`flash-debug-host-tools`. These wrappers are all defined in a Python
+library at :zephyr_file:`scripts/west_commands/runners`. Each wrapper is
+called a *runner*. Runners can flash and/or debug Zephyr programs.
 
-- Their implementations are tightly coupled to the Zephyr build
-  system, e.g. due to their reliance on CMake cache variables.
-
-- Pull requests adding features to them are almost always motivated by
-  a corresponding change to an upstream board, so it makes sense to
-  put them in Zephyr to avoid needing pull requests in multiple
-  repositories.
-
-- Many users find it natural to search for their implementations in
-  the Zephyr source tree.
-
-The extension commands are a thin wrapper around a package called
-``runners`` (this package is also in the Zephyr tree, in
-:zephyr_file:`scripts/west_commands/runners`).
-
-The central abstraction within this library is ``ZephyrBinaryRunner``,
-an abstract class which represents *runner* objects, which can flash
-and/or debug Zephyr programs. The set of available runners is
+The central abstraction within this library is ``ZephyrBinaryRunner``, an
+abstract class which represents runners. The set of available runners is
 determined by the imported subclasses of ``ZephyrBinaryRunner``.
-``ZephyrBinaryRunner`` is available in the ``runners.core`` module;
-individual runner implementations are in other submodules, such as
-``runners.nrfjprog``, ``runners.openocd``, etc.
+``ZephyrBinaryRunner`` is available in the ``runners.core`` module; individual
+runner implementations are in other submodules, such as ``runners.nrfjprog``,
+``runners.openocd``, etc.
 
 Hacking
 *******

@@ -7,7 +7,7 @@
 #include <logging/log.h>
 LOG_MODULE_DECLARE(net_gptp, CONFIG_NET_GPTP_LOG_LEVEL);
 
-#include <ptp_clock.h>
+#include <drivers/ptp_clock.h>
 #include <net/gptp.h>
 
 #include "gptp_messages.h"
@@ -54,7 +54,7 @@ void gptp_call_phase_dis_cb(void)
 int gptp_event_capture(struct net_ptp_time *slave_time, bool *gm_present)
 {
 	int port, key;
-	struct device *clk;
+	const struct device *clk;
 
 	key = irq_lock();
 	*gm_present =  GPTP_GLOBAL_DS()->gm_present;

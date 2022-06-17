@@ -17,6 +17,18 @@
 #include <arch/arm/aarch32/cortex_m/cmsis.h>
 #include <soc/nrfx_coredep.h>
 #include <logging/log.h>
+#include <nrf_erratas.h>
+#if defined(CONFIG_SOC_NRF5340_CPUAPP)
+#include <hal/nrf_cache.h>
+#include <hal/nrf_gpio.h>
+#include <hal/nrf_oscillators.h>
+#include <hal/nrf_regulators.h>
+#elif defined(CONFIG_SOC_NRF5340_CPUNET)
+#include <hal/nrf_nvmc.h>
+#endif
+
+#define PIN_XL1 0
+#define PIN_XL2 1
 
 #ifdef CONFIG_RUNTIME_NMI
 extern void z_arm_nmi_init(void);
@@ -36,7 +48,7 @@ extern void z_arm_nmi_init(void);
 #define LOG_LEVEL CONFIG_SOC_LOG_LEVEL
 LOG_MODULE_REGISTER(soc);
 
-static int nordicsemi_nrf53_init(struct device *arg)
+static int nordicsemi_nrf53_init(const struct device *arg)
 {
 	uint32_t key;
 
@@ -44,29 +56,59 @@ static int nordicsemi_nrf53_init(struct device *arg)
 
 	key = irq_lock();
 
-#ifdef CONFIG_NRF_ENABLE_CACHE
-#ifdef CONFIG_SOC_NRF5340_CPUAPP
+#if defined(CONFIG_SOC_NRF5340_CPUAPP) && defined(CONFIG_NRF_ENABLE_CACHE)
 	/* Enable the instruction & data cache */
-	NRF_CACHE->ENABLE = CACHE_ENABLE_ENABLE_Msk;
-#endif /* CONFIG_SOC_NRF5340_CPUAPP */
-#ifdef CONFIG_SOC_NRF5340_CPUNET
-	NRF_NVMC->ICACHECNF |= NVMC_ICACHECNF_CACHEEN_Enabled;
-#endif /* CONFIG_SOC_NRF5340_CPUNET */
+	nrf_cache_enable(NRF_CACHE);
+#elif defined(CONFIG_SOC_NRF5340_CPUNET) && defined(CONFIG_NRF_ENABLE_CACHE)
+	nrf_nvmc_icache_config_set(NRF_NVMC, NRF_NVMC_ICACHE_ENABLE);
 #endif
 
 #if defined(CONFIG_SOC_NRF5340_CPUAPP) && \
 	!defined(CONFIG_TRUSTED_EXECUTION_NONSECURE)
-	*((uint32_t *)0x500046D0) = 0x1;
+#if defined(CONFIG_SOC_ENABLE_LFXO)
+	nrf_oscillators_lfxo_cap_set(NRF_OSCILLATORS,
+		IS_ENABLED(CONFIG_SOC_LFXO_CAP_INT_6PF) ?
+			NRF_OSCILLATORS_LFXO_CAP_6PF :
+		IS_ENABLED(CONFIG_SOC_LFXO_CAP_INT_7PF) ?
+			NRF_OSCILLATORS_LFXO_CAP_7PF :
+		IS_ENABLED(CONFIG_SOC_LFXO_CAP_INT_9PF) ?
+			NRF_OSCILLATORS_LFXO_CAP_9PF :
+			NRF_OSCILLATORS_LFXO_CAP_EXTERNAL);
+	/* This can only be done from secure code. */
+	nrf_gpio_pin_mcu_select(PIN_XL1, NRF_GPIO_PIN_MCUSEL_PERIPHERAL);
+	nrf_gpio_pin_mcu_select(PIN_XL2, NRF_GPIO_PIN_MCUSEL_PERIPHERAL);
 #endif
+#if defined(CONFIG_SOC_HFXO_CAP_INTERNAL)
+	/* This register is only accessible from secure code. */
+	uint32_t xosc32mtrim = NRF_FICR->XOSC32MTRIM;
+	/* As specified in the nRF5340 PS:
+	 * CAPVALUE = (((FICR->XOSC32MTRIM.SLOPE+56)*(CAPACITANCE*2-14))
+	 *            +((FICR->XOSC32MTRIM.OFFSET-8)<<4)+32)>>6;
+	 * where CAPACITANCE is the desired capacitor value in pF, holding any
+	 * value between 7.0 pF and 20.0 pF in 0.5 pF steps.
+	 */
+	uint32_t slope = (xosc32mtrim & FICR_XOSC32MTRIM_SLOPE_Msk)
+			 >> FICR_XOSC32MTRIM_SLOPE_Pos;
+	uint32_t offset = (xosc32mtrim & FICR_XOSC32MTRIM_OFFSET_Msk)
+			  >> FICR_XOSC32MTRIM_OFFSET_Pos;
+	uint32_t capvalue =
+		((slope + 56) * (CONFIG_SOC_HFXO_CAP_INT_VALUE_X2 - 14)
+		 + ((offset - 8) << 4) + 32) >> 6;
+
+	nrf_oscillators_hfxo_cap_set(NRF_OSCILLATORS, true, capvalue);
+#elif defined(CONFIG_SOC_HFXO_CAP_EXTERNAL)
+	nrf_oscillators_hfxo_cap_set(NRF_OSCILLATORS, false, 0);
+#endif
+#endif /* defined(CONFIG_SOC_NRF5340_CPUAPP) && ... */
 
 #if defined(CONFIG_SOC_DCDC_NRF53X_APP)
-	NRF_REGULATORS->VREGMAIN.DCDCEN = 1;
+	nrf_regulators_dcdcen_set(NRF_REGULATORS, true);
 #endif
 #if defined(CONFIG_SOC_DCDC_NRF53X_NET)
-	NRF_REGULATORS->VREGRADIO.DCDCEN = 1;
+	nrf_regulators_dcdcen_radio_set(NRF_REGULATORS, true);
 #endif
 #if defined(CONFIG_SOC_DCDC_NRF53X_HV)
-	NRF_REGULATORS->VREGH.DCDCEN = 1;
+	nrf_regulators_dcdcen_vddh_set(NRF_REGULATORS, true);
 #endif
 
 	/* Install default handler that simply resets the CPU
@@ -83,40 +125,5 @@ void arch_busy_wait(uint32_t time_us)
 {
 	nrfx_coredep_delay_us(time_us);
 }
-
-void z_platform_init(void)
-{
-	SystemInit();
-}
-
-#if defined(CONFIG_SOC_NRF5340_CPUAPP) && \
-	!defined(CONFIG_TRUSTED_EXECUTION_NONSECURE)
-bool nrf53_has_erratum19(void)
-{
-	if (NRF_FICR->INFO.PART == 0x5340) {
-		if (NRF_FICR->INFO.VARIANT == 0x41414142) {
-			return true;
-		}
-	}
-	return false;
-}
-
-#ifndef CONFIG_NRF5340_CPUAPP_ERRATUM19
-static int check_erratum19(struct device *arg)
-{
-	ARG_UNUSED(arg);
-	if (nrf53_has_erratum19()) {
-		LOG_ERR("This device is affected by nRF53 Erratum 19,");
-		LOG_ERR("but workarounds have not been enabled.");
-		LOG_ERR("See CONFIG_NRF5340_CPUAPP_ERRATUM19.");
-		k_panic();
-	}
-
-	return 0;
-}
-
-SYS_INIT(check_erratum19, POST_KERNEL, CONFIG_APPLICATION_INIT_PRIORITY);
-#endif
-#endif
 
 SYS_INIT(nordicsemi_nrf53_init, PRE_KERNEL_1, 0);

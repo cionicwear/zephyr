@@ -4,7 +4,7 @@ zephyr_library()
 zephyr_library_link_libraries(subsys__bluetooth)
 
 zephyr_library_sources_ifdef(CONFIG_BT_HCI_RAW          hci_raw.c hci_common.c)
-zephyr_library_sources_ifdef(CONFIG_BT_DEBUG_MONITOR    monitor.c)
+zephyr_library_sources_ifdef(CONFIG_BT_MONITOR          monitor.c)
 zephyr_library_sources_ifdef(CONFIG_BT_TINYCRYPT_ECC    hci_ecc.c)
 zephyr_library_sources_ifdef(CONFIG_BT_A2DP             a2dp.c)
 zephyr_library_sources_ifdef(CONFIG_BT_AVDTP            avdtp.c)
@@ -15,9 +15,11 @@ zephyr_library_sources_ifdef(CONFIG_BT_HOST_CCM         aes_ccm.c)
 
 zephyr_library_sources_ifdef(
   CONFIG_BT_BREDR
+  br.c
   keys_br.c
   l2cap_br.c
   sdp.c
+  ssp.c
   )
 
 zephyr_library_sources_ifdef(
@@ -29,12 +31,27 @@ zephyr_library_sources_ifdef(
 if(CONFIG_BT_HCI_HOST)
   zephyr_library_sources(
     uuid.c
+    addr.c
+    buf.c
     hci_core.c
     hci_common.c
+    id.c
+    )
+  zephyr_library_sources_ifdef(
+    CONFIG_BT_BROADCASTER
+    adv.c
+    )
+  zephyr_library_sources_ifdef(
+    CONFIG_BT_OBSERVER
+    scan.c
     )
   zephyr_library_sources_ifdef(
     CONFIG_BT_HOST_CRYPTO
     crypto.c
+    )
+  zephyr_library_sources_ifdef(
+    CONFIG_BT_ECC
+    ecc.c
     )
 
   if(CONFIG_BT_CONN)
@@ -56,12 +73,35 @@ if(CONFIG_BT_HCI_HOST)
         )
     endif()
   endif()
+
+  zephyr_library_sources_ifdef(
+    CONFIG_BT_ISO
+    iso.c
+    conn.c
+    )
+
+  if(CONFIG_BT_DF)
+    zephyr_library_sources(
+      direction.c
+      )
+  endif()
 endif()
 
-if(CONFIG_BT_DEBUG_SMP OR CONFIG_BT_DEBUG_KEYS)
-  message(WARNING "One or both these options are enabled:
-  CONFIG_BT_DEBUG_SMP CONFIG_BT_DEBUG_KEYS.
+if(CONFIG_BT_WHITELIST)
+  message(WARNING "CONFIG_BT_WHITELIST is deprecated.
+  Please use CONFIG_BT_FILTER_ACCEPT_LIST instead."
+    )
+endif()
+if(CONFIG_BT_DEBUG_SMP OR CONFIG_BT_DEBUG_KEYS OR CONFIG_BT_LOG_SNIFFER_INFO)
+  message(WARNING "One of these options are enabled:
+  CONFIG_BT_DEBUG_SMP CONFIG_BT_DEBUG_KEYS CONFIG_BT_LOG_SNIFFER_INFO.
   Private security keys such as the LTK will be printed out, do not use in
+  production."
+    )
+endif()
+if(CONFIG_BT_FIXED_PASSKEY)
+  message(WARNING "CONFIG_BT_FIXED_PASSKEY is enabled
+  A fixed passkey is easy to deduce during the pairing procedure, do not use in
   production."
     )
 endif()

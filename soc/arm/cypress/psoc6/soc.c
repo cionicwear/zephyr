@@ -368,9 +368,13 @@ void Cy_SystemInit(void)
 	/* Configure peripheral clocks */
 	Cy_SysClk_PeriphSetDivider(CY_SYSCLK_DIV_8_BIT, 0u, 0u);
 	Cy_SysClk_PeriphEnableDivider(CY_SYSCLK_DIV_8_BIT, 0u);
+
+#if defined(CONFIG_SOC_PSOC6_M0_ENABLES_M4)
+	Cy_SysEnableCM4(DT_REG_ADDR(DT_NODELABEL(flash1)));
+#endif
 }
 
-static int init_cycfg_platform_wraper(struct device *arg)
+static int init_cycfg_platform_wraper(const struct device *arg)
 {
 	ARG_UNUSED(arg);
 	SystemInit();

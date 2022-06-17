@@ -17,9 +17,6 @@
 
 #if !DT_NODE_HAS_STATUS(PWM_NODE, okay)
 #error "Unsupported board: pwm-servo devicetree alias is not defined or enabled"
-#define PWM_LABEL ""
-#else
-#define PWM_LABEL DT_LABEL(PWM_NODE)
 #endif
 
 /*
@@ -38,16 +35,16 @@ enum direction {
 
 void main(void)
 {
-	struct device *pwm;
+	const struct device *pwm;
 	uint32_t pulse_width = MIN_PULSE_USEC;
 	enum direction dir = UP;
 	int ret;
 
 	printk("Servomotor control\n");
 
-	pwm = device_get_binding(PWM_LABEL);
-	if (!pwm) {
-		printk("Error: didn't find %s device\n", PWM_LABEL);
+	pwm = DEVICE_DT_GET(PWM_NODE);
+	if (!device_is_ready(pwm)) {
+		printk("Error: PWM device %s is not ready\n", pwm->name);
 		return;
 	}
 

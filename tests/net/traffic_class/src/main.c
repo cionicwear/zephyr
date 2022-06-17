@@ -106,8 +106,8 @@ static struct eth_context eth_context;
 
 static void eth_iface_init(struct net_if *iface)
 {
-	struct device *dev = net_if_get_device(iface);
-	struct eth_context *context = dev->driver_data;
+	const struct device *dev = net_if_get_device(iface);
+	struct eth_context *context = dev->data;
 
 	net_if_set_link_addr(iface, context->mac_addr,
 			     sizeof(context->mac_addr),
@@ -155,7 +155,7 @@ static bool check_higher_priority_pkt_recv(int tc, struct net_pkt *pkt)
 /* The eth_tx() will handle both sent packets or and it will also
  * simulate the receiving of the packets.
  */
-static int eth_tx(struct device *dev, struct net_pkt *pkt)
+static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 {
 	if (!pkt->buffer) {
 		DBG("No data to send!\n");
@@ -253,9 +253,9 @@ static void generate_mac(uint8_t *mac_addr)
 	mac_addr[5] = sys_rand32_get();
 }
 
-static int eth_init(struct device *dev)
+static int eth_init(const struct device *dev)
 {
-	struct eth_context *context = dev->driver_data;
+	struct eth_context *context = dev->data;
 
 	generate_mac(context->mac_addr);
 
@@ -266,7 +266,7 @@ static int eth_init(struct device *dev)
  * is quite unlikely that this would be done in real life but for testing
  * purposes create it here.
  */
-NET_DEVICE_INIT(eth_test, "eth_test", eth_init, device_pm_control_nop,
+NET_DEVICE_INIT(eth_test, "eth_test", eth_init, NULL,
 		&eth_context, NULL, CONFIG_ETH_INIT_PRIORITY, &api_funcs,
 		DUMMY_L2, NET_L2_GET_CTX_TYPE(DUMMY_L2),
 		NET_ETH_MTU);
@@ -276,7 +276,7 @@ static void address_setup(void)
 	struct net_if_addr *ifaddr;
 	struct net_if *iface1;
 
-	iface1 = net_if_get_default();
+	iface1 = net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY));
 
 	zassert_not_null(iface1, "Interface 1");
 
@@ -379,7 +379,7 @@ static void setup_net_context(struct net_context **ctx)
 	int ret;
 	struct net_if *iface1;
 
-	iface1 = net_if_get_default();
+	iface1 = net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY));
 
 	ret = net_context_get(AF_INET6, SOCK_DGRAM, IPPROTO_UDP, ctx);
 	zassert_equal(ret, 0, "Create IPv6 UDP context %p failed (%d)\n",

@@ -6,6 +6,9 @@ if SOC_ARC_HSDK
 config SOC
 	default "snps_arc_hsdk"
 
+config CPU_HS3X
+	default y
+
 config NUM_IRQ_PRIO_LEVELS
 	# This processor supports 2 priority levels:
 	# 0 for Fast Interrupts (FIRQs) and 1 for Regular Interrupts (IRQs).
@@ -35,12 +38,6 @@ config ARC_CONNECT
 
 config MP_NUM_CPUS
 	default 4
-
-# When SMP is enabled, use gfrc as wall clock, so sloppy
-# idle should be y
-config SYSTEM_CLOCK_SLOPPY_IDLE
-	default y
-	depends on SMP
 
 config UART_NS16550
 	default y

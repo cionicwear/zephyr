@@ -22,9 +22,14 @@ static const struct soc_gpio_pin pwm_ext2_pin7 = {
 static const struct soc_gpio_pin pwm_ext2_pin8 = {
 	PIO_PD26A_PWM0_PWML2, PIOD, ID_PIOD, SOC_GPIO_FUNC_A
 };
+
+/* PWM on LED0  */
+static const struct soc_gpio_pin pwm_led_0 = {
+	PIO_PA23B_PWM0_PWMH0, PIOA, ID_PIOA, SOC_GPIO_FUNC_B
+};
 #endif
 
-static int sam_v71_xplained_init(struct device *dev)
+static int sam_v71_xplained_init(const struct device *dev)
 {
 	ARG_UNUSED(dev);
 
@@ -32,6 +37,7 @@ static int sam_v71_xplained_init(struct device *dev)
 	soc_gpio_configure(&pwm_ext1_pin7);
 	soc_gpio_configure(&pwm_ext2_pin7);
 	soc_gpio_configure(&pwm_ext2_pin8);
+	soc_gpio_configure(&pwm_led_0);
 #endif
 
 	return 0;

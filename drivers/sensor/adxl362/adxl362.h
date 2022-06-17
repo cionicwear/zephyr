@@ -171,37 +171,28 @@
 #define ADXL362_TEMP_BIAS_LSB 350
 
 struct adxl362_config {
-	char *spi_name;
-	uint32_t spi_max_frequency;
-	uint16_t spi_slave;
-#if DT_INST_SPI_DEV_HAS_CS_GPIOS(0)
-	const char *gpio_cs_port;
-	gpio_pin_t cs_gpio;
-	gpio_dt_flags_t cs_flags;
-#endif
+	struct spi_dt_spec bus;
 #if defined(CONFIG_ADXL362_TRIGGER)
-	const char *gpio_port;
-	gpio_pin_t int_gpio;
-	gpio_dt_flags_t int_flags;
+	struct gpio_dt_spec interrupt;
 	uint8_t int1_config;
 	uint8_t int2_config;
 #endif
 };
 
 struct adxl362_data {
-	struct device *spi;
-	struct spi_config spi_cfg;
-#if DT_INST_SPI_DEV_HAS_CS_GPIOS(0)
-	struct spi_cs_control adxl362_cs_ctrl;
-#endif
-	int16_t acc_x;
-	int16_t acc_y;
-	int16_t acc_z;
+	union {
+		int16_t acc_xyz[3];
+		struct {
+			int16_t acc_x;
+			int16_t acc_y;
+			int16_t acc_z;
+		};
+	} __packed;
 	int16_t temp;
 	uint8_t selected_range;
 
 #if defined(CONFIG_ADXL362_TRIGGER)
-	struct device *gpio;
+	const struct device *dev;
 	struct gpio_callback gpio_cb;
 	struct k_mutex trigger_mutex;
 
@@ -211,12 +202,11 @@ struct adxl362_data {
 	struct sensor_trigger drdy_trigger;
 
 #if defined(CONFIG_ADXL362_TRIGGER_OWN_THREAD)
-	K_THREAD_STACK_MEMBER(thread_stack, CONFIG_ADXL362_THREAD_STACK_SIZE);
+	K_KERNEL_STACK_MEMBER(thread_stack, CONFIG_ADXL362_THREAD_STACK_SIZE);
 	struct k_sem gpio_sem;
 	struct k_thread thread;
 #elif defined(CONFIG_ADXL362_TRIGGER_GLOBAL_THREAD)
 	struct k_work work;
-	struct device *dev;
 #endif
 #endif /* CONFIG_ADXL362_TRIGGER */
 };
@@ -246,22 +236,22 @@ struct adxl362_data {
 #endif
 
 #ifdef CONFIG_ADXL362_TRIGGER
-int adxl362_reg_write_mask(struct device *dev,
+int adxl362_reg_write_mask(const struct device *dev,
 			   uint8_t reg_addr, uint8_t mask, uint8_t data);
 
-int adxl362_get_status(struct device *dev, uint8_t *status);
+int adxl362_get_status(const struct device *dev, uint8_t *status);
 
-int adxl362_interrupt_activity_enable(struct device *dev);
+int adxl362_interrupt_activity_enable(const struct device *dev);
 
-int adxl362_trigger_set(struct device *dev,
+int adxl362_trigger_set(const struct device *dev,
 			const struct sensor_trigger *trig,
 			sensor_trigger_handler_t handler);
 
-int adxl362_init_interrupt(struct device *dev);
+int adxl362_init_interrupt(const struct device *dev);
 
-int adxl362_set_interrupt_mode(struct device *dev, uint8_t mode);
+int adxl362_set_interrupt_mode(const struct device *dev, uint8_t mode);
 
-int adxl362_clear_data_ready(struct device *dev);
+int adxl362_clear_data_ready(const struct device *dev);
 #endif /* CONFIG_ADT7420_TRIGGER */
 
 #endif /* ZEPHYR_DRIVERS_SENSOR_ADXL362_ADXL362_H_ */

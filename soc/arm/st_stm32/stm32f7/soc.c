@@ -15,6 +15,7 @@
 #include <soc.h>
 #include <arch/cpu.h>
 #include <arch/arm/aarch32/cortex_m/cmsis.h>
+#include <stm32_ll_system.h>
 
 /**
  * @brief Perform basic hardware initialization at boot.
@@ -24,11 +25,14 @@
  *
  * @return 0
  */
-static int st_stm32f7_init(struct device *arg)
+static int st_stm32f7_init(const struct device *arg)
 {
 	uint32_t key;
 
 	ARG_UNUSED(arg);
+
+	/* Enable ART Flash cache accelerator */
+	LL_FLASH_EnableART();
 
 	key = irq_lock();
 

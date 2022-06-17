@@ -30,7 +30,14 @@ extern "C" {
 enum {
 	/* The host should never send HCI_Reset */
 	BT_QUIRK_NO_RESET = BIT(0),
+	/* The controller does not auto-initiate a DLE procedure when the
+	 * initial connection data length parameters are not equal to the
+	 * default data length parameters. Therefore the host should initiate
+	 * the DLE procedure after connection establishment. */
+	BT_QUIRK_NO_AUTO_DLE = BIT(1),
 };
+
+#define IS_BT_QUIRK_NO_AUTO_DLE(bt_dev) ((bt_dev)->drv->quirks & BT_QUIRK_NO_AUTO_DLE)
 
 /* @brief The HCI event shall be given to bt_recv_prio */
 #define BT_HCI_EVT_FLAG_RECV_PRIO BIT(0)
@@ -56,11 +63,13 @@ static inline uint8_t bt_hci_evt_get_flags(uint8_t evt)
 	case BT_HCI_EVT_DISCONN_COMPLETE:
 		return BT_HCI_EVT_FLAG_RECV | BT_HCI_EVT_FLAG_RECV_PRIO;
 		/* fallthrough */
-#if defined(CONFIG_BT_CONN)
+#if defined(CONFIG_BT_CONN) || defined(CONFIG_BT_ISO)
 	case BT_HCI_EVT_NUM_COMPLETED_PACKETS:
+#if defined(CONFIG_BT_CONN)
 	case BT_HCI_EVT_DATA_BUF_OVERFLOW:
-		/* fallthrough */
+		__fallthrough;
 #endif /* defined(CONFIG_BT_CONN) */
+#endif /* CONFIG_BT_CONN ||  CONFIG_BT_ISO */
 	case BT_HCI_EVT_CMD_COMPLETE:
 	case BT_HCI_EVT_CMD_STATUS:
 		return BT_HCI_EVT_FLAG_RECV_PRIO;
@@ -201,7 +210,7 @@ int bt_hci_driver_register(const struct bt_hci_driver *drv);
  *
  * @return 0 on success, negative error value on failure
  */
-int bt_hci_transport_setup(struct device *dev);
+int bt_hci_transport_setup(const struct device *dev);
 
 /** Allocate an HCI event buffer.
  *

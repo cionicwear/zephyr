@@ -14,8 +14,6 @@ from pathlib import Path
 from west import log
 from west.commands import WestCommand
 
-from runners.core import RunnerConfig
-
 # This relies on this file being zephyr/scripts/foo/bar.py.
 # If you move this file, you'll break it, so be careful.
 THIS_ZEPHYR = Path(__file__).parent.parent.parent
@@ -47,19 +45,3 @@ class Forceable(WestCommand):
         if not (cond or self.args.force):
             log.err(msg)
             log.die('refusing to proceed without --force due to above error')
-
-
-def cached_runner_config(build_dir, cache):
-    '''Parse the RunnerConfig from a build directory and CMake Cache.'''
-    board_dir = cache['ZEPHYR_RUNNER_CONFIG_BOARD_DIR']
-    elf_file = cache.get('ZEPHYR_RUNNER_CONFIG_KERNEL_ELF')
-    hex_file = cache.get('ZEPHYR_RUNNER_CONFIG_KERNEL_HEX')
-    bin_file = cache.get('ZEPHYR_RUNNER_CONFIG_KERNEL_BIN')
-    gdb = cache.get('ZEPHYR_RUNNER_CONFIG_GDB')
-    openocd = cache.get('ZEPHYR_RUNNER_CONFIG_OPENOCD')
-    openocd_search = cache.get('ZEPHYR_RUNNER_CONFIG_OPENOCD_SEARCH')
-
-    return RunnerConfig(build_dir, board_dir,
-                        elf_file, hex_file, bin_file,
-                        gdb=gdb, openocd=openocd,
-                        openocd_search=openocd_search)

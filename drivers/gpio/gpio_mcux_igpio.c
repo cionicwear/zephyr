@@ -28,10 +28,10 @@ struct mcux_igpio_data {
 	sys_slist_t callbacks;
 };
 
-static int mcux_igpio_configure(struct device *dev,
+static int mcux_igpio_configure(const struct device *dev,
 				gpio_pin_t pin, gpio_flags_t flags)
 {
-	const struct mcux_igpio_config *config = dev->config_info;
+	const struct mcux_igpio_config *config = dev->config;
 	GPIO_Type *base = config->base;
 
 	if (((flags & GPIO_INPUT) != 0) && ((flags & GPIO_OUTPUT) != 0)) {
@@ -59,9 +59,9 @@ static int mcux_igpio_configure(struct device *dev,
 	return 0;
 }
 
-static int mcux_igpio_port_get_raw(struct device *dev, uint32_t *value)
+static int mcux_igpio_port_get_raw(const struct device *dev, uint32_t *value)
 {
-	const struct mcux_igpio_config *config = dev->config_info;
+	const struct mcux_igpio_config *config = dev->config;
 	GPIO_Type *base = config->base;
 
 	*value = base->DR;
@@ -69,10 +69,11 @@ static int mcux_igpio_port_get_raw(struct device *dev, uint32_t *value)
 	return 0;
 }
 
-static int mcux_igpio_port_set_masked_raw(struct device *dev, uint32_t mask,
-		uint32_t value)
+static int mcux_igpio_port_set_masked_raw(const struct device *dev,
+					  uint32_t mask,
+					  uint32_t value)
 {
-	const struct mcux_igpio_config *config = dev->config_info;
+	const struct mcux_igpio_config *config = dev->config;
 	GPIO_Type *base = config->base;
 
 	base->DR = (base->DR & ~mask) | (mask & value);
@@ -80,9 +81,10 @@ static int mcux_igpio_port_set_masked_raw(struct device *dev, uint32_t mask,
 	return 0;
 }
 
-static int mcux_igpio_port_set_bits_raw(struct device *dev, uint32_t mask)
+static int mcux_igpio_port_set_bits_raw(const struct device *dev,
+					uint32_t mask)
 {
-	const struct mcux_igpio_config *config = dev->config_info;
+	const struct mcux_igpio_config *config = dev->config;
 	GPIO_Type *base = config->base;
 
 	base->DR_SET = mask;
@@ -90,9 +92,10 @@ static int mcux_igpio_port_set_bits_raw(struct device *dev, uint32_t mask)
 	return 0;
 }
 
-static int mcux_igpio_port_clear_bits_raw(struct device *dev, uint32_t mask)
+static int mcux_igpio_port_clear_bits_raw(const struct device *dev,
+					  uint32_t mask)
 {
-	const struct mcux_igpio_config *config = dev->config_info;
+	const struct mcux_igpio_config *config = dev->config;
 	GPIO_Type *base = config->base;
 
 	base->DR_CLEAR = mask;
@@ -100,9 +103,10 @@ static int mcux_igpio_port_clear_bits_raw(struct device *dev, uint32_t mask)
 	return 0;
 }
 
-static int mcux_igpio_port_toggle_bits(struct device *dev, uint32_t mask)
+static int mcux_igpio_port_toggle_bits(const struct device *dev,
+				       uint32_t mask)
 {
-	const struct mcux_igpio_config *config = dev->config_info;
+	const struct mcux_igpio_config *config = dev->config;
 	GPIO_Type *base = config->base;
 
 	base->DR_TOGGLE = mask;
@@ -110,11 +114,12 @@ static int mcux_igpio_port_toggle_bits(struct device *dev, uint32_t mask)
 	return 0;
 }
 
-static int mcux_igpio_pin_interrupt_configure(struct device *dev,
-		gpio_pin_t pin, enum gpio_int_mode mode,
-		enum gpio_int_trig trig)
+static int mcux_igpio_pin_interrupt_configure(const struct device *dev,
+					      gpio_pin_t pin,
+					      enum gpio_int_mode mode,
+					      enum gpio_int_trig trig)
 {
-	const struct mcux_igpio_config *config = dev->config_info;
+	const struct mcux_igpio_config *config = dev->config;
 	GPIO_Type *base = config->base;
 	unsigned int key;
 	uint8_t icr;
@@ -163,19 +168,19 @@ static int mcux_igpio_pin_interrupt_configure(struct device *dev,
 	return 0;
 }
 
-static int mcux_igpio_manage_callback(struct device *dev,
-				     struct gpio_callback *callback, bool set)
+static int mcux_igpio_manage_callback(const struct device *dev,
+				      struct gpio_callback *callback,
+				      bool set)
 {
-	struct mcux_igpio_data *data = dev->driver_data;
+	struct mcux_igpio_data *data = dev->data;
 
 	return gpio_manage_callback(&data->callbacks, callback, set);
 }
 
-static void mcux_igpio_port_isr(void *arg)
+static void mcux_igpio_port_isr(const struct device *dev)
 {
-	struct device *dev = (struct device *)arg;
-	const struct mcux_igpio_config *config = dev->config_info;
-	struct mcux_igpio_data *data = dev->driver_data;
+	const struct mcux_igpio_config *config = dev->config;
+	struct mcux_igpio_data *data = dev->data;
 	GPIO_Type *base = config->base;
 	uint32_t int_flags;
 
@@ -201,13 +206,13 @@ static const struct gpio_driver_api mcux_igpio_driver_api = {
 		IRQ_CONNECT(DT_INST_IRQ_BY_IDX(n, i, irq),		\
 			    DT_INST_IRQ_BY_IDX(n, i, priority),		\
 			    mcux_igpio_port_isr,			\
-			    DEVICE_GET(mcux_igpio_##n), 0);		\
+			    DEVICE_DT_INST_GET(n), 0);			\
 									\
 		irq_enable(DT_INST_IRQ_BY_IDX(n, i, irq));		\
 	} while (0)
 
 #define MCUX_IGPIO_INIT(n)						\
-	static int mcux_igpio_##n##_init(struct device *dev);		\
+	static int mcux_igpio_##n##_init(const struct device *dev);	\
 									\
 	static const struct mcux_igpio_config mcux_igpio_##n##_config = {\
 		.common = {						\
@@ -218,17 +223,19 @@ static const struct gpio_driver_api mcux_igpio_driver_api = {
 									\
 	static struct mcux_igpio_data mcux_igpio_##n##_data;		\
 									\
-	DEVICE_AND_API_INIT(mcux_igpio_##n, DT_INST_LABEL(n),		\
+	DEVICE_DT_INST_DEFINE(n,					\
 			    mcux_igpio_##n##_init,			\
+			    NULL,					\
 			    &mcux_igpio_##n##_data,			\
 			    &mcux_igpio_##n##_config,			\
 			    POST_KERNEL,				\
 			    CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,	\
 			    &mcux_igpio_driver_api);			\
 									\
-	static int mcux_igpio_##n##_init(struct device *dev)		\
+	static int mcux_igpio_##n##_init(const struct device *dev)	\
 	{								\
-		MCUX_IGPIO_IRQ_INIT(n, 0);				\
+		IF_ENABLED(DT_INST_IRQ_HAS_IDX(n, 0),			\
+		   (MCUX_IGPIO_IRQ_INIT(n, 0);))		\
 									\
 		IF_ENABLED(DT_INST_IRQ_HAS_IDX(n, 1),			\
 			   (MCUX_IGPIO_IRQ_INIT(n, 1);))		\

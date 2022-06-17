@@ -3,7 +3,7 @@
 
 menuconfig IIS2MDC
 	bool "IIS2MDC Magnetometer"
-	depends on (I2C && HAS_DTS_I2C) || SPI
+	depends on I2C || SPI
 	select HAS_STMEMSC
 	select USE_STDC_IIS2MDC
 	help
@@ -52,9 +52,5 @@ config IIS2MDC_THREAD_STACK_SIZE
 config IIS2MDC_MAG_ODR_RUNTIME
 	bool "Set magnetometer sampling frequency (ODR) at runtime (default: 10 Hz)"
 	default y
-
-config IIS2MDC_SPI_FULL_DUPLEX
-	bool "Enable SPI 4wire mode (separated MISO and MOSI lines)"
-	depends on SPI
 
 endif # IIS2MDC

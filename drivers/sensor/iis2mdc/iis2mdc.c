@@ -23,9 +23,10 @@ struct iis2mdc_data iis2mdc_data;
 LOG_MODULE_REGISTER(IIS2MDC, CONFIG_SENSOR_LOG_LEVEL);
 
 #ifdef CONFIG_IIS2MDC_MAG_ODR_RUNTIME
-static int iis2mdc_set_odr(struct device *dev, const struct sensor_value *val)
+static int iis2mdc_set_odr(const struct device *dev,
+			   const struct sensor_value *val)
 {
-	struct iis2mdc_data *iis2mdc = dev->driver_data;
+	struct iis2mdc_data *iis2mdc = dev->data;
 	iis2mdc_odr_t odr;
 
 	switch (val->val1) {
@@ -53,29 +54,30 @@ static int iis2mdc_set_odr(struct device *dev, const struct sensor_value *val)
 }
 #endif /* CONFIG_IIS2MDC_MAG_ODR_RUNTIME */
 
-static int iis2mdc_set_hard_iron(struct device *dev, enum sensor_channel chan,
+static int iis2mdc_set_hard_iron(const struct device *dev,
+				   enum sensor_channel chan,
 				   const struct sensor_value *val)
 {
-	struct iis2mdc_data *iis2mdc = dev->driver_data;
+	struct iis2mdc_data *iis2mdc = dev->data;
 	uint8_t i;
-	union axis3bit16_t offset;
+	int16_t offset[3];
 
 	for (i = 0U; i < 3; i++) {
-		offset.i16bit[i] = sys_cpu_to_le16(val->val1);
+		offset[i] = sys_cpu_to_le16(val->val1);
 		val++;
 	}
 
-	return iis2mdc_mag_user_offset_set(iis2mdc->ctx, offset.u8bit);
+	return iis2mdc_mag_user_offset_set(iis2mdc->ctx, offset);
 }
 
-static void iis2mdc_channel_get_mag(struct device *dev,
+static void iis2mdc_channel_get_mag(const struct device *dev,
 				      enum sensor_channel chan,
 				      struct sensor_value *val)
 {
 	int32_t cval;
 	int i;
 	uint8_t ofs_start, ofs_stop;
-	struct iis2mdc_data *iis2mdc = dev->driver_data;
+	struct iis2mdc_data *iis2mdc = dev->data;
 	struct sensor_value *pval = val;
 
 	switch (chan) {
@@ -102,16 +104,17 @@ static void iis2mdc_channel_get_mag(struct device *dev,
 }
 
 /* read internal temperature */
-static void iis2mdc_channel_get_temp(struct device *dev,
+static void iis2mdc_channel_get_temp(const struct device *dev,
 				       struct sensor_value *val)
 {
-	struct iis2mdc_data *drv_data = dev->driver_data;
+	struct iis2mdc_data *drv_data = dev->data;
 
 	val->val1 = drv_data->temp_sample / 100;
 	val->val2 = (drv_data->temp_sample % 100) * 10000;
 }
 
-static int iis2mdc_channel_get(struct device *dev, enum sensor_channel chan,
+static int iis2mdc_channel_get(const struct device *dev,
+				 enum sensor_channel chan,
 				 struct sensor_value *val)
 {
 	switch (chan) {
@@ -132,7 +135,7 @@ static int iis2mdc_channel_get(struct device *dev, enum sensor_channel chan,
 	return 0;
 }
 
-static int iis2mdc_config(struct device *dev, enum sensor_channel chan,
+static int iis2mdc_config(const struct device *dev, enum sensor_channel chan,
 			    enum sensor_attribute attr,
 			    const struct sensor_value *val)
 {
@@ -151,7 +154,7 @@ static int iis2mdc_config(struct device *dev, enum sensor_channel chan,
 	return 0;
 }
 
-static int iis2mdc_attr_set(struct device *dev,
+static int iis2mdc_attr_set(const struct device *dev,
 			      enum sensor_channel chan,
 			      enum sensor_attribute attr,
 			      const struct sensor_value *val)
@@ -171,44 +174,45 @@ static int iis2mdc_attr_set(struct device *dev,
 	return 0;
 }
 
-static int iis2mdc_sample_fetch_mag(struct device *dev)
+static int iis2mdc_sample_fetch_mag(const struct device *dev)
 {
-	struct iis2mdc_data *iis2mdc = dev->driver_data;
-	union axis3bit16_t raw_mag;
+	struct iis2mdc_data *iis2mdc = dev->data;
+	int16_t raw_mag[3];
 
 	/* fetch raw data sample */
-	if (iis2mdc_magnetic_raw_get(iis2mdc->ctx, raw_mag.u8bit) < 0) {
+	if (iis2mdc_magnetic_raw_get(iis2mdc->ctx, raw_mag) < 0) {
 		LOG_DBG("Failed to read sample");
 		return -EIO;
 	}
 
-	iis2mdc->mag[0] = sys_le16_to_cpu(raw_mag.i16bit[0]);
-	iis2mdc->mag[1] = sys_le16_to_cpu(raw_mag.i16bit[1]);
-	iis2mdc->mag[2] = sys_le16_to_cpu(raw_mag.i16bit[2]);
+	iis2mdc->mag[0] = sys_le16_to_cpu(raw_mag[0]);
+	iis2mdc->mag[1] = sys_le16_to_cpu(raw_mag[1]);
+	iis2mdc->mag[2] = sys_le16_to_cpu(raw_mag[2]);
 
 	return 0;
 }
 
-static int iis2mdc_sample_fetch_temp(struct device *dev)
+static int iis2mdc_sample_fetch_temp(const struct device *dev)
 {
-	struct iis2mdc_data *iis2mdc = dev->driver_data;
-	union axis1bit16_t raw_temp;
+	struct iis2mdc_data *iis2mdc = dev->data;
+	int16_t raw_temp;
 	int32_t temp;
 
 	/* fetch raw temperature sample */
-	if (iis2mdc_temperature_raw_get(iis2mdc->ctx, raw_temp.u8bit) < 0) {
+	if (iis2mdc_temperature_raw_get(iis2mdc->ctx, &raw_temp) < 0) {
 		LOG_DBG("Failed to read sample");
 		return -EIO;
 	}
 
 	/* formula is temp = 25 + (temp / 8) C */
-	temp = (sys_le16_to_cpu(raw_temp.i16bit) & 0x8FFF);
+	temp = sys_le16_to_cpu(raw_temp);
 	iis2mdc->temp_sample = 2500 + (temp * 100) / 8;
 
 	return 0;
 }
 
-static int iis2mdc_sample_fetch(struct device *dev, enum sensor_channel chan)
+static int iis2mdc_sample_fetch(const struct device *dev,
+				enum sensor_channel chan)
 {
 	switch (chan) {
 	case SENSOR_CHAN_MAGN_X:
@@ -240,59 +244,20 @@ static const struct sensor_driver_api iis2mdc_driver_api = {
 	.channel_get = iis2mdc_channel_get,
 };
 
-static int iis2mdc_init_interface(struct device *dev)
+static int iis2mdc_init(const struct device *dev)
 {
-	const struct iis2mdc_config *const config =
-						dev->config_info;
-	struct iis2mdc_data *iis2mdc = dev->driver_data;
-
-	iis2mdc->bus = device_get_binding(config->master_dev_name);
-	if (!iis2mdc->bus) {
-		LOG_DBG("Could not get pointer to %s device",
-			    config->master_dev_name);
-		return -EINVAL;
-	}
-
-	return config->bus_init(dev);
-}
-
-static const struct iis2mdc_config iis2mdc_dev_config = {
-	.master_dev_name = DT_INST_BUS_LABEL(0),
-#ifdef CONFIG_IIS2MDC_TRIGGER
-	.drdy_port = DT_INST_GPIO_LABEL(0, drdy_gpios),
-	.drdy_pin = DT_INST_GPIO_PIN(0, drdy_gpios),
-	.drdy_flags = DT_INST_GPIO_FLAGS(0, drdy_gpios),
-#endif  /* CONFIG_IIS2MDC_TRIGGER */
-#if DT_ANY_INST_ON_BUS_STATUS_OKAY(spi)
-	.bus_init = iis2mdc_spi_init,
-	.spi_conf.frequency = DT_INST_PROP(0, spi_max_frequency),
-	.spi_conf.operation = (SPI_OP_MODE_MASTER | SPI_MODE_CPOL |
-			       SPI_MODE_CPHA | SPI_WORD_SET(8) |
-			       SPI_LINES_SINGLE),
-	.spi_conf.slave     = DT_INST_REG_ADDR(0),
-#if DT_INST_SPI_DEV_HAS_CS_GPIOS(0)
-	.gpio_cs_port	    = DT_INST_SPI_DEV_CS_GPIOS_LABEL(0),
-	.cs_gpio	    = DT_INST_SPI_DEV_CS_GPIOS_PIN(0),
-	.cs_gpio_flags	    = DT_INST_SPI_DEV_CS_GPIOS_LABEL(0),
-
-	.spi_conf.cs        =  &iis2mdc_data.cs_ctrl,
-#else
-	.spi_conf.cs        = NULL,
-#endif
-#elif DT_ANY_INST_ON_BUS_STATUS_OKAY(i2c)
-	.bus_init = iis2mdc_i2c_init,
-	.i2c_slv_addr = DT_INST_REG_ADDR(0),
-#else
-#error "BUS MACRO NOT DEFINED IN DTS"
-#endif
-};
-
-static int iis2mdc_init(struct device *dev)
-{
-	struct iis2mdc_data *iis2mdc = dev->driver_data;
+	const struct iis2mdc_dev_config *const cfg = dev->config;
+	struct iis2mdc_data *iis2mdc = dev->data;
 	uint8_t wai;
 
-	if (iis2mdc_init_interface(dev)) {
+	iis2mdc->dev = dev;
+
+	if (!device_is_ready(cfg->bus)) {
+		LOG_ERR("Cannot get pointer to bus device");
+		return -ENODEV;
+	}
+
+	if (cfg->bus_init(dev) < 0) {
 		return -EINVAL;
 	}
 
@@ -313,13 +278,6 @@ static int iis2mdc_init(struct device *dev)
 	}
 
 	k_busy_wait(100);
-
-#if CONFIG_IIS2MDC_SPI_FULL_DUPLEX
-	/* After s/w reset set SPI 4wires again if the case */
-	if (iis2mdc_spi_mode_set(iis2mdc->ctx, IIS2MDC_SPI_4_WIRE) < 0) {
-		return -EIO;
-	}
-#endif
 
 	/* enable BDU */
 	if (iis2mdc_block_data_update_set(iis2mdc->ctx, PROPERTY_ENABLE) < 0) {
@@ -362,6 +320,78 @@ static int iis2mdc_init(struct device *dev)
 	return 0;
 }
 
-DEVICE_AND_API_INIT(iis2mdc, DT_INST_LABEL(0), iis2mdc_init,
-		     &iis2mdc_data, &iis2mdc_dev_config, POST_KERNEL,
-		     CONFIG_SENSOR_INIT_PRIORITY, &iis2mdc_driver_api);
+#if DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 0
+#warning "IIS2MDC driver enabled without any devices"
+#endif
+
+/*
+ * Device creation macro, shared by IIS2MDC_DEFINE_SPI() and
+ * IIS2MDC_DEFINE_I2C().
+ */
+
+#define IIS2MDC_DEVICE_INIT(inst)					\
+	DEVICE_DT_INST_DEFINE(inst,					\
+			    iis2mdc_init,				\
+			    NULL,					\
+			    &iis2mdc_data_##inst,			\
+			    &iis2mdc_config_##inst,			\
+			    POST_KERNEL,				\
+			    CONFIG_SENSOR_INIT_PRIORITY,		\
+			    &iis2mdc_driver_api);
+
+/*
+ * Instantiation macros used when a device is on a SPI bus.
+ */
+
+#ifdef CONFIG_IIS2MDC_TRIGGER
+#define IIS2MDC_CFG_IRQ(inst) \
+	.gpio_drdy = GPIO_DT_SPEC_INST_GET(inst, drdy_gpios),
+#else
+#define IIS2MDC_CFG_IRQ(inst)
+#endif /* CONFIG_IIS2MDC_TRIGGER */
+
+#define IIS2MDC_SPI_OP  (SPI_WORD_SET(8) |				\
+			 SPI_OP_MODE_MASTER |				\
+			 SPI_LINES_SINGLE |				\
+			 SPI_MODE_CPOL |				\
+			 SPI_MODE_CPHA)					\
+
+#define IIS2MDC_CONFIG_SPI(inst)					\
+	{								\
+		.bus = DEVICE_DT_GET(DT_INST_BUS(inst)),		\
+		.bus_init = iis2mdc_spi_init,				\
+		.bus_cfg.spi_cfg =					\
+			SPI_CONFIG_DT_INST(inst,			\
+					   IIS2MDC_SPI_OP,		\
+					   0),				\
+		COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, drdy_gpios),	\
+			(IIS2MDC_CFG_IRQ(inst)), ())			\
+	}
+
+/*
+ * Instantiation macros used when a device is on an I2C bus.
+ */
+
+#define IIS2MDC_CONFIG_I2C(inst)					\
+	{								\
+		.bus = DEVICE_DT_GET(DT_INST_BUS(inst)),		\
+		.bus_init = iis2mdc_i2c_init,				\
+		.bus_cfg.i2c_slv_addr = DT_INST_REG_ADDR(inst),		\
+		COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, drdy_gpios),	\
+			(IIS2MDC_CFG_IRQ(inst)), ())			\
+	}
+
+/*
+ * Main instantiation macro. Use of COND_CODE_1() selects the right
+ * bus-specific macro at preprocessor time.
+ */
+
+#define IIS2MDC_DEFINE(inst)						\
+	static struct iis2mdc_data iis2mdc_data_##inst;			\
+	static const struct iis2mdc_dev_config iis2mdc_config_##inst =	\
+		COND_CODE_1(DT_INST_ON_BUS(inst, spi),			\
+			(IIS2MDC_CONFIG_SPI(inst)),			\
+			(IIS2MDC_CONFIG_I2C(inst)));			\
+	IIS2MDC_DEVICE_INIT(inst)
+
+DT_INST_FOREACH_STATUS_OKAY(IIS2MDC_DEFINE)

@@ -23,8 +23,8 @@ int mqtt_client_tcp_connect(struct mqtt_client *client)
 	const struct sockaddr *broker = client->broker;
 	int ret;
 
-	client->transport.tcp.sock = socket(broker->sa_family, SOCK_STREAM,
-					    IPPROTO_TCP);
+	client->transport.tcp.sock = zsock_socket(broker->sa_family, SOCK_STREAM,
+						  IPPROTO_TCP);
 	if (client->transport.tcp.sock < 0) {
 		return -errno;
 	}
@@ -49,10 +49,10 @@ int mqtt_client_tcp_connect(struct mqtt_client *client)
 		peer_addr_size = sizeof(struct sockaddr_in);
 	}
 
-	ret = connect(client->transport.tcp.sock, client->broker,
-		      peer_addr_size);
+	ret = zsock_connect(client->transport.tcp.sock, client->broker,
+			    peer_addr_size);
 	if (ret < 0) {
-		(void)close(client->transport.tcp.sock);
+		(void) zsock_close(client->transport.tcp.sock);
 		return -errno;
 	}
 
@@ -67,8 +67,8 @@ int mqtt_client_tcp_write(struct mqtt_client *client, const uint8_t *data,
 	int ret;
 
 	while (offset < datalen) {
-		ret = send(client->transport.tcp.sock, data + offset,
-			   datalen - offset, 0);
+		ret = zsock_send(client->transport.tcp.sock, data + offset,
+				 datalen - offset, 0);
 		if (ret < 0) {
 			return -errno;
 		}
@@ -83,11 +83,37 @@ int mqtt_client_tcp_write_msg(struct mqtt_client *client,
 			      const struct msghdr *message)
 
 {
-	int ret;
+	int ret, i;
+	size_t offset = 0;
+	size_t total_len = 0;
 
-	ret = sendmsg(client->transport.tcp.sock, message, 0);
-	if (ret < 0) {
-		return -errno;
+	for (i = 0; i < message->msg_iovlen; i++) {
+		total_len += message->msg_iov[i].iov_len;
+	}
+
+	while (offset < total_len) {
+		ret = zsock_sendmsg(client->transport.tcp.sock, message, 0);
+		if (ret < 0) {
+			return -errno;
+		}
+
+		offset += ret;
+		if (offset >= total_len) {
+			break;
+		}
+
+		/* Update msghdr for the next iteration. */
+		for (i = 0; i < message->msg_iovlen; i++) {
+			if (ret < message->msg_iov[i].iov_len) {
+				message->msg_iov[i].iov_len -= ret;
+				message->msg_iov[i].iov_base =
+					(uint8_t *)message->msg_iov[i].iov_base + ret;
+				break;
+			}
+
+			ret -= message->msg_iov[i].iov_len;
+			message->msg_iov[i].iov_len = 0;
+		}
 	}
 
 	return 0;
@@ -100,10 +126,10 @@ int mqtt_client_tcp_read(struct mqtt_client *client, uint8_t *data, uint32_t buf
 	int ret;
 
 	if (!shall_block) {
-		flags |= MSG_DONTWAIT;
+		flags |= ZSOCK_MSG_DONTWAIT;
 	}
 
-	ret = recv(client->transport.tcp.sock, data, buflen, flags);
+	ret = zsock_recv(client->transport.tcp.sock, data, buflen, flags);
 	if (ret < 0) {
 		return -errno;
 	}
@@ -117,7 +143,7 @@ int mqtt_client_tcp_disconnect(struct mqtt_client *client)
 
 	MQTT_TRC("Closing socket %d", client->transport.tcp.sock);
 
-	ret = close(client->transport.tcp.sock);
+	ret = zsock_close(client->transport.tcp.sock);
 	if (ret < 0) {
 		return -errno;
 	}

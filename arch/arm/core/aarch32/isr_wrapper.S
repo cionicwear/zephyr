@@ -12,6 +12,10 @@
  * Wrapper installed in vector table for handling dynamic interrupts that accept
  * a parameter.
  */
+/*
+ * Tell armclang that stack alignment are ensured.
+ */
+.eabi_attribute Tag_ABI_align_preserved, 1
 
 #include <toolchain.h>
 #include <linker/sections.h>
@@ -45,6 +49,35 @@ SECTION_FUNC(TEXT, _isr_wrapper)
 #if defined(CONFIG_CPU_CORTEX_M)
 	push {r0,lr}		/* r0, lr are now the first items on the stack */
 #elif defined(CONFIG_CPU_CORTEX_R)
+
+#if defined(CONFIG_USERSPACE)
+	/* See comment below about svc stack usage */
+	cps #MODE_SVC
+	push {r0}
+
+	/* Determine if interrupted thread was in user context */
+	cps #MODE_IRQ
+	mrs r0, spsr
+	and r0, #MODE_MASK
+	cmp r0, #MODE_USR
+	bne isr_system_thread
+
+	ldr r0, =_kernel
+	ldr r0, [r0, #_kernel_offset_to_current]
+
+	/* Save away user stack pointer */
+	cps #MODE_SYS
+	str sp, [r0, #_thread_offset_to_sp_usr] /* sp_usr */
+
+	/* Switch to privileged stack */
+	ldr sp, [r0, #_thread_offset_to_priv_stack_end] /* priv stack end */
+
+isr_system_thread:
+	cps #MODE_SVC
+	pop {r0}
+	cps #MODE_IRQ
+#endif
+
 	/*
 	 * Save away r0-r3, r12 and lr_irq for the previous context to the
 	 * process stack since they are clobbered here.  Also, save away lr
@@ -68,6 +101,13 @@ SECTION_FUNC(TEXT, _isr_wrapper)
 	 */
 	cps #MODE_SVC
 
+	/*
+	 * Preserve lr_svc which may contain the branch return address of the
+	 * interrupted context in case of a nested interrupt. This value will
+	 * be restored prior to exiting the interrupt in z_arm_int_exit.
+	 */
+	push {lr}
+
 	/* Align stack at double-word boundary */
 	and r3, sp, #4
 	sub sp, sp, r3
@@ -80,21 +120,17 @@ SECTION_FUNC(TEXT, _isr_wrapper)
 	str r0, [r2, #_kernel_offset_to_nested]
 #endif /* CONFIG_CPU_CORTEX_M */
 
-#ifdef CONFIG_EXECUTION_BENCHMARKING
-	bl read_timer_start_of_isr
-#endif
-
 #ifdef CONFIG_TRACING_ISR
 	bl sys_trace_isr_enter
 #endif
 
-#ifdef CONFIG_SYS_POWER_MANAGEMENT
+#ifdef CONFIG_PM
 	/*
 	 * All interrupts are disabled when handling idle wakeup.  For tickless
 	 * idle, this ensures that the calculation and programming of the
 	 * device for the next timer deadline is not interrupted.  For
 	 * non-tickless idle, this ensures that the clearing of the kernel idle
-	 * state is not interrupted.  In each case, z_sys_power_save_idle_exit
+	 * state is not interrupted.  In each case, z_pm_save_idle_exit
 	 * is called with interrupts disabled.
 	 */
 
@@ -119,7 +155,7 @@ SECTION_FUNC(TEXT, _isr_wrapper)
 	movs.n r1, #0
 	/* clear kernel idle state */
 	str r1, [r2, #_kernel_offset_to_idle]
-	bl z_sys_power_save_idle_exit
+	bl z_pm_save_idle_exit
 _idle_state_cleared:
 
 #elif defined(CONFIG_ARMV7_M_ARMV8_M_MAINLINE)
@@ -127,13 +163,13 @@ _idle_state_cleared:
 	movne	r1, #0
 		/* clear kernel idle state */
 		strne	r1, [r2, #_kernel_offset_to_idle]
-		blne	z_sys_power_save_idle_exit
+		blne	z_pm_save_idle_exit
 #elif defined(CONFIG_ARMV7_R)
 	beq _idle_state_cleared
 	movs r1, #0
 	/* clear kernel idle state */
 	str r1, [r2, #_kernel_offset_to_idle]
-	bl z_sys_power_save_idle_exit
+	bl z_pm_save_idle_exit
 _idle_state_cleared:
 #else
 #error Unknown ARM architecture
@@ -143,7 +179,7 @@ _idle_state_cleared:
 	cpsie i		/* re-enable interrupts (PRIMASK = 0) */
 #endif
 
-#endif /* CONFIG_SYS_POWER_MANAGEMENT */
+#endif /* CONFIG_PM */
 
 #if defined(CONFIG_CPU_CORTEX_M)
 	mrs r0, IPSR	/* get exception number */
@@ -180,6 +216,14 @@ _idle_state_cleared:
 	 * interface function.
 	 */
 	cpsie i
+
+	/*
+	 * Skip calling the isr if it is a spurious interrupt.
+	 */
+	mov r1, #CONFIG_NUM_IRQS
+	lsl r1, r1, #3
+	cmp r0, r1
+	bge spurious_continue
 #endif /* !CONFIG_CPU_CORTEX_M */
 
 	ldr r1, =_sw_isr_table
@@ -187,14 +231,10 @@ _idle_state_cleared:
 			 * in thumb mode */
 
 	ldm r1!,{r0,r3}	/* arg in r0, ISR in r3 */
-#ifdef CONFIG_EXECUTION_BENCHMARKING
-	push {r0, r3}	/* Save r0 and r3 into stack */
-	bl read_timer_end_of_isr
-	pop {r0, r3}	/* Restore r0 and r3 regs */
-#endif /* CONFIG_EXECUTION_BENCHMARKING */
 	blx r3		/* call ISR */
 
 #if defined(CONFIG_CPU_CORTEX_R)
+spurious_continue:
 	/* Signal end-of-interrupt */
 	pop {r0, r1}
 #if !defined(CONFIG_ARM_CUSTOM_INTERRUPT_CONTROLLER)

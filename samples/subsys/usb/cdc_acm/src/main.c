@@ -28,8 +28,10 @@ uint8_t ring_buffer[RING_BUF_SIZE];
 
 struct ring_buf ringbuf;
 
-static void interrupt_handler(struct device *dev)
+static void interrupt_handler(const struct device *dev, void *user_data)
 {
+	ARG_UNUSED(user_data);
+
 	while (uart_irq_update(dev) && uart_irq_is_pending(dev)) {
 		if (uart_irq_rx_ready(dev)) {
 			int recv_len, rb_len;
@@ -72,13 +74,13 @@ static void interrupt_handler(struct device *dev)
 
 void main(void)
 {
-	struct device *dev;
+	const struct device *dev;
 	uint32_t baudrate, dtr = 0U;
 	int ret;
 
-	dev = device_get_binding("CDC_ACM_0");
-	if (!dev) {
-		LOG_ERR("CDC ACM device not found");
+	dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);
+	if (!device_is_ready(dev)) {
+		LOG_ERR("CDC ACM device not ready");
 		return;
 	}
 

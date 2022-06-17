@@ -17,7 +17,7 @@ static gpio_pin_config_t enet_gpio_config = {
 };
 #endif
 
-#if DT_NODE_HAS_STATUS(DT_NODELABEL(usdhc1), okay) && CONFIG_DISK_ACCESS_USDHC1
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(usdhc1), okay) && CONFIG_DISK_DRIVER_SDMMC
 
 /*Drive Strength Field: R0(260 Ohm @ 3.3V, 150 Ohm@1.8V, 240 Ohm for DDR)
  *Speed Field: medium(100MHz)
@@ -102,7 +102,7 @@ static void mimxrt1050_evk_usdhc_pinmux(
 }
 #endif
 
-static int mimxrt1050_evk_init(struct device *dev)
+static int mimxrt1050_evk_init(const struct device *dev)
 {
 	ARG_UNUSED(dev);
 
@@ -118,8 +118,8 @@ static int mimxrt1050_evk_init(struct device *dev)
 			    IOMUXC_SW_PAD_CTL_PAD_DSE(6));
 #endif
 
-#if !DT_NODE_HAS_STATUS(DT_NODELABEL(enet), okay)
-	/* LED */
+#if !CONFIG_NET_L2_ETHERNET
+	/* Shared GPIO between USER_LED and ENET_RST */
 	IOMUXC_SetPinMux(IOMUXC_GPIO_AD_B0_09_GPIO1_IO09, 0);
 
 	IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_09_GPIO1_IO09,
@@ -225,7 +225,9 @@ static int mimxrt1050_evk_init(struct device *dev)
 	IOMUXC_SetPinMux(IOMUXC_GPIO_EMC_40_ENET_MDC, 0);
 	IOMUXC_SetPinMux(IOMUXC_GPIO_EMC_41_ENET_MDIO, 0);
 
+	/* Shared GPIO between USER_LED and ENET_RST */
 	IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_09_GPIO1_IO09, 0xB0A9u);
+
 	IOMUXC_SetPinConfig(IOMUXC_GPIO_AD_B0_10_GPIO1_IO10, 0xB0A9u);
 	IOMUXC_SetPinConfig(IOMUXC_GPIO_B1_04_ENET_RX_DATA00, 0xB0E9);
 	IOMUXC_SetPinConfig(IOMUXC_GPIO_B1_05_ENET_RX_DATA01, 0xB0E9);
@@ -308,7 +310,7 @@ static int mimxrt1050_evk_init(struct device *dev)
 	GPIO_PinInit(GPIO2, 31, &config);
 #endif
 
-#if DT_NODE_HAS_STATUS(DT_NODELABEL(usdhc1), okay) && CONFIG_DISK_ACCESS_USDHC1
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(usdhc1), okay) && CONFIG_DISK_DRIVER_SDMMC
 	mimxrt1050_evk_usdhc_pinmux(0, true, 2, 1);
 	imxrt_usdhc_pinmux_cb_register(mimxrt1050_evk_usdhc_pinmux);
 #endif
@@ -317,7 +319,7 @@ static int mimxrt1050_evk_init(struct device *dev)
 }
 
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(enet), okay) && CONFIG_NET_L2_ETHERNET
-static int mimxrt1050_evk_phy_reset(struct device *dev)
+static int mimxrt1050_evk_phy_reset(const struct device *dev)
 {
 	/* RESET PHY chip. */
 	k_busy_wait(USEC_PER_MSEC * 10U);
@@ -329,5 +331,5 @@ static int mimxrt1050_evk_phy_reset(struct device *dev)
 
 SYS_INIT(mimxrt1050_evk_init, PRE_KERNEL_1, 0);
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(enet), okay) && CONFIG_NET_L2_ETHERNET
-SYS_INIT(mimxrt1050_evk_phy_reset, PRE_KERNEL_2, 0);
+SYS_INIT(mimxrt1050_evk_phy_reset, POST_KERNEL, CONFIG_PHY_INIT_PRIORITY);
 #endif

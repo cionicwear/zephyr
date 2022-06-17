@@ -7,13 +7,16 @@
 
 
 #include <soc.h>
+#include <stm32_ll_bus.h>
+#include <stm32_ll_rcc.h>
+#include <stm32_ll_utils.h>
 #include <drivers/clock_control.h>
 #include <sys/util.h>
 #include <drivers/clock_control/stm32_clock_control.h>
 #include "clock_stm32_ll_common.h"
 
 
-#ifdef CONFIG_CLOCK_STM32_SYSCLK_SRC_PLL
+#if STM32_SYSCLK_SRC_PLL
 
 /**
  * @brief fill in pll configuration structure
@@ -28,7 +31,7 @@ void config_pll_init(LL_UTILS_PLLInitTypeDef *pllinit)
 	 * ...
 	 * 16 -> LL_RCC_PLL_MUL_16 -> 0x00380000
 	 */
-	pllinit->PLLMul = ((CONFIG_CLOCK_STM32_PLL_MULTIPLIER - 2)
+	pllinit->PLLMul = ((STM32_PLL_MULTIPLIER - 2)
 					<< RCC_CFGR_PLLMUL_Pos);
 
 	/*
@@ -46,13 +49,13 @@ void config_pll_init(LL_UTILS_PLLInitTypeDef *pllinit)
 	 * STM32F030xC, STM32F302xE, STM32F303xE and STM32F39xx
 	 * cf Reference manual for more details
 	 */
-	pllinit->PLLDiv = CONFIG_CLOCK_STM32_PLL_PREDIV1 - 1;
+	pllinit->PLLDiv = STM32_PLL_PREDIV1 - 1;
 #else
-	pllinit->Prediv = CONFIG_CLOCK_STM32_PLL_PREDIV - 1;
+	pllinit->Prediv = STM32_PLL_PREDIV - 1;
 #endif /* RCC_PLLSRC_PREDIV1_SUPPORT */
 }
 
-#endif /* CONFIG_CLOCK_STM32_SYSCLK_SRC_PLL */
+#endif /* STM32_SYSCLK_SRC_PLL */
 
 /**
  * @brief Activate default clocks

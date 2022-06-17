@@ -23,6 +23,19 @@ find_program(
   )
 endif()
 
+# We need to set up uefi-run and OVMF environment
+# for testing UEFI method on qemu platforms
+if(CONFIG_QEMU_UEFI_BOOT)
+  find_program(UEFI NAMES uefi-run REQUIRED)
+  if(DEFINED ENV{OVMF_FD_PATH})
+    set(OVMF_FD_PATH $ENV{OVMF_FD_PATH})
+  else()
+    message(FATAL_ERROR "Couldn't find an valid OVMF_FD_PATH.")
+  endif()
+  list(APPEND UEFI -b ${OVMF_FD_PATH} -q ${QEMU})
+  set(QEMU ${UEFI})
+endif()
+
 set(qemu_targets
   run
   debugserver
@@ -226,17 +239,23 @@ elseif(QEMU_NET_STACK)
     set_ifndef(NET_TOOLS ${ZEPHYR_BASE}/../net-tools) # Default if not set
 
     list(APPEND PRE_QEMU_COMMANDS_FOR_server
-      COMMAND ${NET_TOOLS}/monitor_15_4
-  ${PCAP}
-  /tmp/ip-stack-server
+      COMMAND
+      #This command is run in the background using '&'. This prevents
+      #chaining other commands with '&&'. The command is enclosed in '{}'
+      #to fix this.
+      {
+      ${NET_TOOLS}/monitor_15_4
+      ${PCAP}
+      /tmp/ip-stack-server
       /tmp/ip-stack-client
       > /dev/null &
+      }
       # TODO: Support cleanup of the monitor_15_4 process
       )
   endif()
 endif(QEMU_PIPE_STACK)
 
-if(CONFIG_X86_64)
+if(CONFIG_X86_64 AND NOT CONFIG_QEMU_UEFI_BOOT)
   # QEMU doesn't like 64-bit ELF files. Since we don't use any >4GB
   # addresses, converting it to 32-bit is safe enough for emulation.
   add_custom_target(qemu_image_target
@@ -244,7 +263,7 @@ if(CONFIG_X86_64)
     ${CMAKE_OBJCOPY}
     -O elf32-i386
     $<TARGET_FILE:${logical_target_for_zephyr_elf}>
-    ${CMAKE_BINARY_DIR}/zephyr-qemu.elf
+    ${ZEPHYR_BINARY_DIR}/zephyr-qemu.elf
     DEPENDS ${logical_target_for_zephyr_elf}
     )
 
@@ -257,8 +276,8 @@ if(CONFIG_X86_64)
     COMMAND
     ${CMAKE_OBJCOPY}
     -j .locore
-    ${CMAKE_BINARY_DIR}/zephyr-qemu.elf
-    ${CMAKE_BINARY_DIR}/zephyr-qemu-locore.elf
+    ${ZEPHYR_BINARY_DIR}/zephyr-qemu.elf
+    ${ZEPHYR_BINARY_DIR}/zephyr-qemu-locore.elf
     2>&1 | grep -iv \"empty loadable segment detected\" || true
     DEPENDS qemu_image_target
     )
@@ -267,8 +286,8 @@ if(CONFIG_X86_64)
     COMMAND
     ${CMAKE_OBJCOPY}
     -R .locore
-    ${CMAKE_BINARY_DIR}/zephyr-qemu.elf
-    ${CMAKE_BINARY_DIR}/zephyr-qemu-main.elf
+    ${ZEPHYR_BINARY_DIR}/zephyr-qemu.elf
+    ${ZEPHYR_BINARY_DIR}/zephyr-qemu-main.elf
     2>&1 | grep -iv \"empty loadable segment detected\" || true
     DEPENDS qemu_image_target
     )
@@ -278,11 +297,25 @@ if(CONFIG_X86_64)
     DEPENDS qemu_locore_image_target qemu_main_image_target
     )
 
-  set(QEMU_KERNEL_FILE "${CMAKE_BINARY_DIR}/zephyr-qemu-locore.elf")
+  set(QEMU_KERNEL_FILE "${ZEPHYR_BINARY_DIR}/zephyr-qemu-locore.elf")
 
   list(APPEND QEMU_EXTRA_FLAGS
-    "-device;loader,file=${CMAKE_BINARY_DIR}/zephyr-qemu-main.elf"
+    "-device;loader,file=${ZEPHYR_BINARY_DIR}/zephyr-qemu-main.elf"
     )
+endif()
+
+if(CONFIG_IVSHMEM)
+  if(CONFIG_IVSHMEM_DOORBELL)
+    list(APPEND QEMU_FLAGS
+      -device ivshmem-doorbell,vectors=${CONFIG_IVSHMEM_MSI_X_VECTORS},chardev=ivshmem
+      -chardev socket,path=/tmp/ivshmem_socket,id=ivshmem
+    )
+  else()
+    list(APPEND QEMU_FLAGS
+      -device ivshmem-plain,memdev=hostmem
+      -object memory-backend-file,size=${CONFIG_QEMU_IVSHMEM_PLAIN_MEM_SIZE}M,share,mem-path=/dev/shm/ivshmem,id=hostmem
+    )
+  endif()
 endif()
 
 if(NOT QEMU_PIPE)
@@ -307,7 +340,10 @@ list(APPEND MORE_FLAGS_FOR_debugserver -s -S)
 # file to pass to qemu (and a "qemu_kernel_target" target to generate
 # it), or set QEMU_KERNEL_OPTION if they want to replace the "-kernel
 # ..." option entirely.
-if(DEFINED QEMU_KERNEL_FILE)
+if(CONFIG_QEMU_UEFI_BOOT)
+  set(QEMU_UEFI_OPTION  ${PROJECT_BINARY_DIR}/${CONFIG_KERNEL_BIN_NAME}.efi)
+  list(APPEND QEMU_UEFI_OPTION --)
+elseif(DEFINED QEMU_KERNEL_FILE)
   set(QEMU_KERNEL_OPTION "-kernel;${QEMU_KERNEL_FILE}")
 elseif(NOT DEFINED QEMU_KERNEL_OPTION)
   set(QEMU_KERNEL_OPTION "-kernel;$<TARGET_FILE:${logical_target_for_zephyr_elf}>")
@@ -321,6 +357,7 @@ foreach(target ${qemu_targets})
     ${PRE_QEMU_COMMANDS_FOR_${target}}
     COMMAND
     ${QEMU}
+    ${QEMU_UEFI_OPTION}
     ${QEMU_FLAGS_${ARCH}}
     ${QEMU_FLAGS}
     ${QEMU_EXTRA_FLAGS}

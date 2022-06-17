@@ -16,7 +16,7 @@
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
-static struct device *mic_dev;
+static const struct device *mic_dev;
 
 static void data_received(const struct device *dev,
 			  struct net_buf *buffer,
@@ -42,7 +42,7 @@ static void data_received(const struct device *dev,
 	}
 }
 
-static void feature_update(struct device *dev,
+static void feature_update(const struct device *dev,
 			   const struct usb_audio_fu_evt *evt)
 {
 	LOG_DBG("Control selector %d for channel %d updated",
@@ -65,7 +65,7 @@ static const struct usb_audio_ops mic_ops = {
 
 void main(void)
 {
-	struct device *hp_dev = device_get_binding("HEADPHONES");
+	const struct device *hp_dev = device_get_binding("HEADPHONES");
 	int ret;
 
 	LOG_INF("Entered %s", __func__);
@@ -76,10 +76,14 @@ void main(void)
 		return;
 	}
 
+	LOG_INF("Found USB Headphones Device");
+
 	if (!mic_dev) {
 		LOG_ERR("Can not get USB Microphone Device");
 		return;
 	}
+
+	LOG_INF("Found USB Microphone Device");
 
 	usb_audio_register(hp_dev, &hp_ops);
 
@@ -90,4 +94,6 @@ void main(void)
 		LOG_ERR("Failed to enable USB");
 		return;
 	}
+
+	LOG_INF("USB enabled");
 }

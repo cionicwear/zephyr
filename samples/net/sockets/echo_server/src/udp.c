@@ -77,12 +77,6 @@ static int start_udp_proto(struct data *data, struct sockaddr *bind_addr,
 	}
 #endif
 
-#if defined(CONFIG_NET_CONTEXT_TIMESTAMP)
-	bool val = 1;
-
-	setsockopt(data->udp.sock, SOL_SOCKET, SO_TIMESTAMPING, &val, sizeof(val));
-#endif
-
 	ret = bind(data->udp.sock, bind_addr, bind_addrlen);
 	if (ret < 0) {
 		NET_ERR("Failed to bind UDP socket (%s): %d", data->proto,
@@ -115,6 +109,8 @@ static int process_udp(struct data *data)
 				errno);
 			ret = -errno;
 			break;
+		} else if (received) {
+			atomic_add(&data->udp.bytes_received, received);
 		}
 
 		ret = sendto(data->udp.sock, data->udp.recv_buffer, received, 0,
@@ -154,6 +150,8 @@ static void process_udp4(void)
 		return;
 	}
 
+	k_work_reschedule(&conf.ipv4.udp.stats_print, K_SECONDS(STATS_TIMER));
+
 	while (ret == 0) {
 		ret = process_udp(&conf.ipv4);
 		if (ret < 0) {
@@ -178,12 +176,34 @@ static void process_udp6(void)
 		return;
 	}
 
+	k_work_reschedule(&conf.ipv6.udp.stats_print, K_SECONDS(STATS_TIMER));
+
 	while (ret == 0) {
 		ret = process_udp(&conf.ipv6);
 		if (ret < 0) {
 			quit();
 		}
 	}
+}
+
+static void print_stats(struct k_work *work)
+{
+	struct data *data = CONTAINER_OF(work, struct data, udp.stats_print);
+	int total_received = atomic_get(&data->udp.bytes_received);
+
+	if (total_received) {
+		if ((total_received / STATS_TIMER) < 1024) {
+			LOG_INF("%s UDP: Received %d B/sec", data->proto,
+				total_received / STATS_TIMER);
+		} else {
+			LOG_INF("%s UDP: Received %d KiB/sec", data->proto,
+				total_received / 1024 / STATS_TIMER);
+		}
+
+		atomic_set(&data->udp.bytes_received, 0);
+	}
+
+	k_work_reschedule(&data->udp.stats_print, K_SECONDS(STATS_TIMER));
 }
 
 void start_udp(void)
@@ -193,6 +213,8 @@ void start_udp(void)
 		k_mem_domain_add_thread(&app_domain, udp6_thread_id);
 #endif
 
+		k_work_init_delayable(&conf.ipv6.udp.stats_print, print_stats);
+		k_thread_name_set(udp6_thread_id, "udp6");
 		k_thread_start(udp6_thread_id);
 	}
 
@@ -201,6 +223,8 @@ void start_udp(void)
 		k_mem_domain_add_thread(&app_domain, udp4_thread_id);
 #endif
 
+		k_work_init_delayable(&conf.ipv4.udp.stats_print, print_stats);
+		k_thread_name_set(udp4_thread_id, "udp4");
 		k_thread_start(udp4_thread_id);
 	}
 }

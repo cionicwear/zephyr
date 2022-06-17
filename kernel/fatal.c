@@ -13,8 +13,9 @@
 #include <logging/log_ctrl.h>
 #include <logging/log.h>
 #include <fatal.h>
+#include <debug/coredump.h>
 
-LOG_MODULE_DECLARE(os);
+LOG_MODULE_DECLARE(os, CONFIG_KERNEL_LOG_LEVEL);
 
 /* LCOV_EXCL_START */
 FUNC_NORETURN __weak void arch_system_halt(unsigned int reason)
@@ -41,15 +42,15 @@ __weak void k_sys_fatal_error_handler(unsigned int reason,
 	LOG_PANIC();
 	LOG_ERR("Halting system");
 	arch_system_halt(reason);
-	CODE_UNREACHABLE;
+	CODE_UNREACHABLE; /* LCOV_EXCL_LINE */
 }
 /* LCOV_EXCL_STOP */
 
 static const char *thread_name_get(struct k_thread *thread)
 {
-	const char *thread_name = k_thread_name_get(thread);
+	const char *thread_name = (thread != NULL) ? k_thread_name_get(thread) : NULL;
 
-	if (thread_name == NULL || thread_name[0] == '\0') {
+	if ((thread_name == NULL) || (thread_name[0] == '\0')) {
 		thread_name = "unknown";
 	}
 
@@ -97,10 +98,11 @@ void z_fatal_error(unsigned int reason, const z_arch_esf_t *esf)
 	 * appropriate.
 	 */
 	unsigned int key = arch_irq_lock();
-	struct k_thread *thread = k_current_get();
+	struct k_thread *thread = IS_ENABLED(CONFIG_MULTITHREADING) ?
+			k_current_get() : NULL;
 
-	/* sanitycheck looks for the "ZEPHYR FATAL ERROR" string, don't
-	 * change it without also updating sanitycheck
+	/* twister looks for the "ZEPHYR FATAL ERROR" string, don't
+	 * change it without also updating twister
 	 */
 	LOG_ERR(">>> ZEPHYR FATAL ERROR %d: %s on CPU %d", reason,
 		reason_to_str(reason), get_cpu());
@@ -119,6 +121,8 @@ void z_fatal_error(unsigned int reason, const z_arch_esf_t *esf)
 
 	LOG_ERR("Current thread: %p (%s)", thread,
 		log_strdup(thread_name_get(thread)));
+
+	coredump(reason, esf, thread);
 
 	k_sys_fatal_error_handler(reason, esf);
 
@@ -176,5 +180,8 @@ void z_fatal_error(unsigned int reason, const z_arch_esf_t *esf)
 	}
 
 	arch_irq_unlock(key);
-	k_thread_abort(thread);
+
+	if (IS_ENABLED(CONFIG_MULTITHREADING)) {
+		k_thread_abort(thread);
+	}
 }

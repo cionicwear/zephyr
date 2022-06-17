@@ -7,7 +7,7 @@
 #include <string.h>
 #include <zephyr/types.h>
 #include <sys/__assert.h>
-#include <disk/disk_access.h>
+#include <storage/disk_access.h>
 #include <errno.h>
 #include <init.h>
 #include <device.h>
@@ -88,7 +88,7 @@ static struct disk_info ram_disk = {
 	.ops = &ram_disk_ops,
 };
 
-static int disk_ram_test_init(struct device *dev)
+static int disk_ram_test_init(const struct device *dev)
 {
 	ARG_UNUSED(dev);
 

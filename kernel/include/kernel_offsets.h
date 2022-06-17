@@ -26,12 +26,17 @@ GEN_ABS_SYM_BEGIN(_OffsetAbsSyms)
 GEN_OFFSET_SYM(_cpu_t, current);
 GEN_OFFSET_SYM(_cpu_t, nested);
 GEN_OFFSET_SYM(_cpu_t, irq_stack);
+GEN_OFFSET_SYM(_cpu_t, arch);
+
+GEN_ABSOLUTE_SYM(___cpu_t_SIZEOF, sizeof(struct _cpu));
+
+GEN_OFFSET_SYM(_kernel_t, cpus);
 
 #if defined(CONFIG_THREAD_MONITOR)
 GEN_OFFSET_SYM(_kernel_t, threads);
 #endif
 
-#ifdef CONFIG_SYS_POWER_MANAGEMENT
+#ifdef CONFIG_PM
 GEN_OFFSET_SYM(_kernel_t, idle);
 #endif
 
@@ -77,10 +82,18 @@ GEN_OFFSET_SYM(_thread_t, next_thread);
 GEN_OFFSET_SYM(_thread_t, custom_data);
 #endif
 
+#ifdef CONFIG_THREAD_LOCAL_STORAGE
+GEN_OFFSET_SYM(_thread_t, tls);
+#endif
+
 GEN_ABSOLUTE_SYM(K_THREAD_SIZEOF, sizeof(struct k_thread));
 
 /* size of the device structure. Used by linker scripts */
-GEN_ABSOLUTE_SYM(_DEVICE_STRUCT_SIZEOF, sizeof(struct device));
+GEN_ABSOLUTE_SYM(_DEVICE_STRUCT_SIZEOF, sizeof(const struct device));
+
+/* member offsets in the device structure. Used in image post-processing */
+GEN_ABSOLUTE_SYM(_DEVICE_STRUCT_HANDLES_OFFSET,
+		 offsetof(struct device, handles));
 
 /* LCOV_EXCL_STOP */
 #endif /* ZEPHYR_KERNEL_INCLUDE_KERNEL_OFFSETS_H_ */

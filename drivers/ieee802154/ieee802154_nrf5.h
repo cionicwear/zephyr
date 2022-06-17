@@ -8,7 +8,7 @@
 #ifndef ZEPHYR_DRIVERS_IEEE802154_IEEE802154_NRF5_H_
 #define ZEPHYR_DRIVERS_IEEE802154_IEEE802154_NRF5_H_
 
-#include "nrf_802154_config.h"
+#include <net/ieee802154_radio.h>
 
 #define NRF5_FCS_LENGTH   (2)
 #define NRF5_PSDU_LENGTH  (125)
@@ -31,7 +31,7 @@ struct nrf5_802154_data {
 	uint8_t mac[8];
 
 	/* RX thread stack. */
-	K_THREAD_STACK_MEMBER(rx_stack, CONFIG_IEEE802154_NRF5_RX_STACK_SIZE);
+	K_KERNEL_STACK_MEMBER(rx_stack, CONFIG_IEEE802154_NRF5_RX_STACK_SIZE);
 
 	/* RX thread control block. */
 	struct k_thread rx_thread;
@@ -42,7 +42,7 @@ struct nrf5_802154_data {
 	/* Buffers for passing received frame pointers and data to the
 	 * RX thread via rx_fifo object.
 	 */
-	struct nrf5_802154_rx_frame rx_frames[NRF_802154_RX_BUFFERS];
+	struct nrf5_802154_rx_frame rx_frames[CONFIG_NRF_802154_RX_BUFFERS];
 
 	/* Frame pending bit value in ACK sent for the last received frame. */
 	bool last_frame_ack_fpb;
@@ -80,6 +80,18 @@ struct nrf5_802154_data {
 	 * Can be NULL if event notification is not needed.
 	 */
 	ieee802154_event_cb_t event_handler;
+
+	/* Capabilities of the network interface. */
+	enum ieee802154_hw_caps capabilities;
+
+	/* Next CSL receive time */
+	uint32_t csl_rx_time;
+
+	/* Indicates if currently processed TX frame is secured. */
+	bool tx_frame_is_secured;
+
+	/* Indicates if currently processed TX frame has dynamic data updated. */
+	bool tx_frame_mac_hdr_rdy;
 };
 
 #endif /* ZEPHYR_DRIVERS_IEEE802154_IEEE802154_NRF5_H_ */

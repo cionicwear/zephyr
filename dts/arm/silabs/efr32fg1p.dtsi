@@ -4,6 +4,7 @@
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/i2c/i2c.h>
 #include "gpio_gecko.h"
+#include <dt-bindings/pwm/pwm.h>
 
 / {
 	chosen {
@@ -167,10 +168,26 @@
 		wdog0: wdog@40052000 {
 			compatible = "silabs,gecko-wdog";
 			reg = <0x40052000 0x2C>;
+			peripheral-id = <0>;
 			label = "WDOG0";
 			interrupts = <2 0>;
 			status = "disabled";
 		};
+
+		timer0: timer@40018000 {
+			compatible = "silabs,gecko-timers";
+			reg = <0x40018000 0x400>;
+			status = "disabled";
+			label = "TIMER_0";
+
+			pwm {
+				compatible = "silabs,gecko-pwm";
+				status = "disabled";
+				label = "PWM_0";
+				#pwm-cells = <2>;
+			};
+		};
+
 	};
 };
 

@@ -9,7 +9,9 @@
 #include <kernel_internal.h>
 #include <exc_handle.h>
 #include <logging/log.h>
-LOG_MODULE_DECLARE(os);
+#include <x86_mmu.h>
+#include <mmu.h>
+LOG_MODULE_DECLARE(os, CONFIG_KERNEL_LOG_LEVEL);
 
 #if defined(CONFIG_BOARD_QEMU_X86) || defined(CONFIG_BOARD_QEMU_X86_64)
 FUNC_NORETURN void arch_system_halt(unsigned int reason)
@@ -50,6 +52,7 @@ static inline uintptr_t esf_get_code(const z_arch_esf_t *esf)
 }
 
 #ifdef CONFIG_THREAD_STACK_INFO
+__pinned_func
 bool z_x86_check_stack_bounds(uintptr_t addr, size_t size, uint16_t cs)
 {
 	uintptr_t start, end;
@@ -64,21 +67,27 @@ bool z_x86_check_stack_bounds(uintptr_t addr, size_t size, uint16_t cs)
 #else
 		cpu_id = 0;
 #endif
-		start = (uintptr_t)Z_THREAD_STACK_BUFFER(
+		start = (uintptr_t)Z_KERNEL_STACK_BUFFER(
 		    z_interrupt_stacks[cpu_id]);
 		end = start + CONFIG_ISR_STACK_SIZE;
-	} else if ((cs & 0x3U) != 0U ||
-		   (_current->base.user_options & K_USER) == 0) {
-		/* Thread was in user mode, or is not a user mode thread.
-		 * The normal stack buffer is what we will check.
+#ifdef CONFIG_USERSPACE
+	} else if ((cs & 0x3U) == 0U &&
+		   (_current->base.user_options & K_USER) != 0) {
+		/* The low two bits of the CS register is the privilege
+		 * level. It will be 0 in supervisor mode and 3 in user mode
+		 * corresponding to ring 0 / ring 3.
+		 *
+		 * If we get here, we must have been doing a syscall, check
+		 * privilege elevation stack bounds
 		 */
+		start = _current->stack_info.start - CONFIG_MMU_PAGE_SIZE;
+		end = _current->stack_info.start;
+#endif /* CONFIG_USERSPACE */
+	} else {
+		/* Normal thread operation, check its stack buffer */
 		start = _current->stack_info.start;
 		end = Z_STACK_PTR_ALIGN(_current->stack_info.start +
-				       _current->stack_info.size);
-	} else {
-		/* User thread was doing a syscall, check kernel stack bounds */
-		start = _current->stack_info.start - MMU_PAGE_SIZE;
-		end = _current->stack_info.start;
+					_current->stack_info.size);
 	}
 
 	return (addr <= start) || (addr + size > end);
@@ -97,6 +106,7 @@ struct stack_frame {
 
 #define MAX_STACK_FRAMES 8
 
+__pinned_func
 static void unwind_stack(uintptr_t base_ptr, uint16_t cs)
 {
 	struct stack_frame *frame;
@@ -142,22 +152,31 @@ static void unwind_stack(uintptr_t base_ptr, uint16_t cs)
 }
 #endif /* CONFIG_X86_EXCEPTION_STACK_TRACE */
 
-static inline struct x86_page_tables *get_ptables(const z_arch_esf_t *esf)
+static inline uintptr_t get_cr3(const z_arch_esf_t *esf)
 {
 #if defined(CONFIG_USERSPACE) && defined(CONFIG_X86_KPTI)
 	/* If the interrupted thread was in user mode, we did a page table
 	 * switch when we took the exception via z_x86_trampoline_to_kernel
 	 */
 	if ((esf->cs & 0x3) != 0) {
-		return z_x86_thread_page_tables_get(_current);
+		return _current->arch.ptables;
 	}
 #else
 	ARG_UNUSED(esf);
 #endif
-	return z_x86_page_tables_get();
+	/* Return the current CR3 value, it didn't change when we took
+	 * the exception
+	 */
+	return z_x86_cr3_get();
+}
+
+static inline pentry_t *get_ptables(const z_arch_esf_t *esf)
+{
+	return z_mem_virt_addr(get_cr3(esf));
 }
 
 #ifdef CONFIG_X86_64
+__pinned_func
 static void dump_regs(const z_arch_esf_t *esf)
 {
 	LOG_ERR("RAX: 0x%016lx RBX: 0x%016lx RCX: 0x%016lx RDX: 0x%016lx",
@@ -168,8 +187,8 @@ static void dump_regs(const z_arch_esf_t *esf)
 		esf->r8, esf->r9, esf->r10, esf->r11);
 	LOG_ERR("R12: 0x%016lx R13: 0x%016lx R14: 0x%016lx R15: 0x%016lx",
 		esf->r12, esf->r13, esf->r14, esf->r15);
-	LOG_ERR("RSP: 0x%016lx RFLAGS: 0x%016lx CS: 0x%04lx CR3: %p", esf->rsp,
-		esf->rflags, esf->cs & 0xFFFFU, get_ptables(esf));
+	LOG_ERR("RSP: 0x%016lx RFLAGS: 0x%016lx CS: 0x%04lx CR3: 0x%016lx",
+		esf->rsp, esf->rflags, esf->cs & 0xFFFFU, get_cr3(esf));
 
 #ifdef CONFIG_X86_EXCEPTION_STACK_TRACE
 	LOG_ERR("call trace:");
@@ -180,14 +199,15 @@ static void dump_regs(const z_arch_esf_t *esf)
 #endif
 }
 #else /* 32-bit */
+__pinned_func
 static void dump_regs(const z_arch_esf_t *esf)
 {
 	LOG_ERR("EAX: 0x%08x, EBX: 0x%08x, ECX: 0x%08x, EDX: 0x%08x",
 		esf->eax, esf->ebx, esf->ecx, esf->edx);
 	LOG_ERR("ESI: 0x%08x, EDI: 0x%08x, EBP: 0x%08x, ESP: 0x%08x",
 		esf->esi, esf->edi, esf->ebp, esf->esp);
-	LOG_ERR("EFLAGS: 0x%08x CS: 0x%04x CR3: %p", esf->eflags,
-		esf->cs & 0xFFFFU, get_ptables(esf));
+	LOG_ERR("EFLAGS: 0x%08x CS: 0x%04x CR3: 0x%08lx", esf->eflags,
+		esf->cs & 0xFFFFU, get_cr3(esf));
 
 #ifdef CONFIG_X86_EXCEPTION_STACK_TRACE
 	LOG_ERR("call trace:");
@@ -199,6 +219,7 @@ static void dump_regs(const z_arch_esf_t *esf)
 }
 #endif /* CONFIG_X86_64 */
 
+__pinned_func
 static void log_exception(uintptr_t vector, uintptr_t code)
 {
 	switch (vector) {
@@ -264,42 +285,35 @@ static void log_exception(uintptr_t vector, uintptr_t code)
 		LOG_ERR("Security exception");
 		break;
 	default:
+		LOG_ERR("Exception not handled (code 0x%lx)", code);
 		break;
 	}
 }
 
-/* Page fault error code flags */
-#define PRESENT	BIT(0)
-#define WR	BIT(1)
-#define US	BIT(2)
-#define RSVD	BIT(3)
-#define ID	BIT(4)
-#define PK	BIT(5)
-#define SGX	BIT(15)
-
+__pinned_func
 static void dump_page_fault(z_arch_esf_t *esf)
 {
-	uintptr_t err, cr2;
+	uintptr_t err;
+	void *cr2;
 
-	/* See Section 6.15 of the IA32 Software Developer's Manual vol 3 */
-	__asm__ ("mov %%cr2, %0" : "=r" (cr2));
-
+	cr2 = z_x86_cr2_get();
 	err = esf_get_code(esf);
-	LOG_ERR("Page fault at address 0x%lx (error code 0x%lx)", cr2, err);
+	LOG_ERR("Page fault at address %p (error code 0x%lx)", cr2, err);
 
-	if ((err & RSVD) != 0) {
+	if ((err & PF_RSVD) != 0) {
 		LOG_ERR("Reserved bits set in page tables");
-	} else if ((err & PRESENT) == 0) {
-		LOG_ERR("Linear address not present in page tables");
 	} else {
+		if ((err & PF_P) == 0) {
+			LOG_ERR("Linear address not present in page tables");
+		}
 		LOG_ERR("Access violation: %s thread not allowed to %s",
-			(err & US) != 0U ? "user" : "supervisor",
-			(err & ID) != 0U ? "execute" : ((err & WR) != 0U ?
-							"write" :
-							"read"));
-		if ((err & PK) != 0) {
+			(err & PF_US) != 0U ? "user" : "supervisor",
+			(err & PF_ID) != 0U ? "execute" : ((err & PF_WR) != 0U ?
+							   "write" :
+							   "read"));
+		if ((err & PF_PK) != 0) {
 			LOG_ERR("Protection key disallowed");
-		} else if ((err & SGX) != 0) {
+		} else if ((err & PF_SGX) != 0) {
 			LOG_ERR("SGX access control violation");
 		}
 	}
@@ -310,6 +324,7 @@ static void dump_page_fault(z_arch_esf_t *esf)
 }
 #endif /* CONFIG_EXCEPTION_DEBUG */
 
+__pinned_func
 FUNC_NORETURN void z_x86_fatal_error(unsigned int reason,
 				     const z_arch_esf_t *esf)
 {
@@ -332,6 +347,7 @@ FUNC_NORETURN void z_x86_fatal_error(unsigned int reason,
 	CODE_UNREACHABLE;
 }
 
+__pinned_func
 FUNC_NORETURN void z_x86_unhandled_cpu_exception(uintptr_t vector,
 						 const z_arch_esf_t *esf)
 {
@@ -351,8 +367,51 @@ static const struct z_exc_handle exceptions[] = {
 };
 #endif
 
+__pinned_func
 void z_x86_page_fault_handler(z_arch_esf_t *esf)
 {
+#ifdef CONFIG_DEMAND_PAGING
+	if ((esf->errorCode & PF_P) == 0) {
+		/* Page was non-present at time exception happened.
+		 * Get faulting virtual address from CR2 register
+		 */
+		void *virt = z_x86_cr2_get();
+		bool was_valid_access;
+
+#ifdef CONFIG_X86_KPTI
+		/* Protection ring is lowest 2 bits in interrupted CS */
+		bool was_user = ((esf->cs & 0x3) != 0U);
+
+		/* Need to check if the interrupted context was a user thread
+		 * that hit a non-present page that was flipped due to KPTI in
+		 * the thread's page tables, in which case this is an access
+		 * violation and we should treat this as an error.
+		 *
+		 * We're probably not locked, but if there is a race, we will
+		 * be fine, the kernel page fault code will later detect that
+		 * the page is present in the kernel's page tables and the
+		 * instruction will just be re-tried, producing another fault.
+		 */
+		if (was_user &&
+		    !z_x86_kpti_is_access_ok(virt, get_ptables(esf))) {
+			was_valid_access = false;
+		} else
+#else
+		{
+			was_valid_access = z_page_fault(virt);
+		}
+#endif /* CONFIG_X86_KPTI */
+		if (was_valid_access) {
+			/* Page fault handled, re-try */
+			return;
+		}
+	}
+#endif /* CONFIG_DEMAND_PAGING */
+
+#if !defined(CONFIG_X86_64) && defined(CONFIG_DEBUG_COREDUMP)
+	z_x86_exception_vector = IV_PAGE_FAULT;
+#endif
+
 #ifdef CONFIG_USERSPACE
 	int i;
 
@@ -384,6 +443,7 @@ void z_x86_page_fault_handler(z_arch_esf_t *esf)
 	CODE_UNREACHABLE;
 }
 
+__pinned_func
 void z_x86_do_kernel_oops(const z_arch_esf_t *esf)
 {
 	uintptr_t reason;

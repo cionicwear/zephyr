@@ -28,10 +28,8 @@
 #include <aarch32/cortex_m/stack.h>
 #include <aarch32/cortex_m/exc.h>
 #elif defined(CONFIG_CPU_CORTEX_R)
-#include <aarch32/cortex_r/stack.h>
-#include <aarch32/cortex_r/exc.h>
-#elif defined(CONFIG_CPU_CORTEX_A)
-#include <aarch64/exc.h>
+#include <aarch32/cortex_a_r/stack.h>
+#include <aarch32/cortex_a_r/exc.h>
 #endif
 
 #ifndef _ASMLANGUAGE
@@ -46,6 +44,14 @@ extern "C" {
 
 typedef struct __esf _esf_t;
 typedef struct __basic_sf _basic_sf_t;
+
+#ifdef CONFIG_ARM_MPU
+struct z_arm_mpu_partition {
+	uintptr_t start;
+	size_t size;
+	k_mem_partition_attr_t attr;
+};
+#endif
 
 #ifdef __cplusplus
 }

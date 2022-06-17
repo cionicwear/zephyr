@@ -16,12 +16,15 @@ There are various points in time when the scheduler is given an
 opportunity to change the identity of the current thread.  These points
 are called **reschedule points**. Some potential reschedule points are:
 
-- transition of a thread to the :ref:`ready state <thread_states>`, for
-  example by :cpp:func:`k_sem_give` or :cpp:func:`k_thread_start`
 - transition of a thread from running state to a suspended or waiting
-  state, for example by :cpp:func:`k_sem_take` or :cpp:func:`k_sleep`
+  state, for example by :c:func:`k_sem_take` or :c:func:`k_sleep`.
+- transition of a thread to the :ref:`ready state <thread_states>`, for
+  example by :c:func:`k_sem_give` or :c:func:`k_thread_start`
 - return to thread context after processing an interrupt
-- when a running thread invokes :cpp:func:`k_yield()`
+- when a running thread invokes :c:func:`k_yield`
+
+A thread **sleeps** when it voluntarily initiates an operation that
+transitions itself to a suspended or waiting state.
 
 Whenever the scheduler changes the identity of the current thread,
 or when execution of the current thread is replaced by an ISR,
@@ -36,6 +39,15 @@ The kernel's scheduler selects the highest priority ready thread
 to be the current thread. When multiple ready threads of the same priority
 exist, the scheduler chooses the one that has been waiting longest.
 
+A thread's relative priority is primarily determined by its static priority.
+However, when both earliest-deadline-first scheduling is enabled
+(:kconfig:`CONFIG_SCHED_DEADLINE`) and a choice of threads have equal
+static priority, then the thread with the earlier deadline is considered
+to have the higher priority. Thus, when earliest-deadline-first scheduling is
+enabled, two threads are only considered to have the same priority when both
+their static priorities and deadlines are equal. The routine
+:c:func:`k_thread_deadline_set` is used to set a thread's deadline.
+
 .. note::
     Execution of ISRs takes precedence over thread execution,
     so the execution of the current thread may be replaced by an ISR
@@ -47,7 +59,7 @@ The kernel can be built with one of several choices for the ready queue
 implementation, offering different choices between code size, constant factor
 runtime overhead and performance scaling when many threads are added.
 
-* Simple linked-list ready queue (:option:`CONFIG_SCHED_DUMB`)
+* Simple linked-list ready queue (:kconfig:`CONFIG_SCHED_DUMB`)
 
   The scheduler ready queue will be implemented as a simple unordered list, with
   very fast constant time performance for single threads and very low code size.
@@ -56,7 +68,7 @@ runtime overhead and performance scaling when many threads are added.
   the queue at any given time.  On most platforms (that are not otherwise using
   the red/black tree) this results in a savings of ~2k of code size.
 
-* Red/black tree ready queue (:option:`CONFIG_SCHED_SCALABLE`)
+* Red/black tree ready queue (:kconfig:`CONFIG_SCHED_SCALABLE`)
 
   The scheduler ready queue will be implemented as a red/black tree.  This has
   rather slower constant-time insertion and removal overhead, and on most
@@ -67,7 +79,7 @@ runtime overhead and performance scaling when many threads are added.
   Use this for applications needing many concurrent runnable threads (> 20 or
   so).  Most applications won't need this ready queue implementation.
 
-* Traditional multi-queue ready queue (:option:`CONFIG_SCHED_MULTIQ`)
+* Traditional multi-queue ready queue (:kconfig:`CONFIG_SCHED_MULTIQ`)
 
   When selected, the scheduler ready queue will be implemented as the
   classic/textbook array of lists, one per priority (max 32 priorities).
@@ -90,17 +102,17 @@ The wait_q abstraction used in IPC primitives to pend threads for later wakeup
 shares the same backend data structure choices as the scheduler, and can use
 the same options.
 
-* Scalable wait_q implementation (:option:`CONFIG_WAITQ_SCALABLE`)
+* Scalable wait_q implementation (:kconfig:`CONFIG_WAITQ_SCALABLE`)
 
   When selected, the wait_q will be implemented with a balanced tree.  Choose
   this if you expect to have many threads waiting on individual primitives.
-  There is a ~2kb code size increase over :option:`CONFIG_WAITQ_DUMB` (which may
-  be shared with :option:`CONFIG_SCHED_SCALABLE`) if the red/black tree is not
+  There is a ~2kb code size increase over :kconfig:`CONFIG_WAITQ_DUMB` (which may
+  be shared with :kconfig:`CONFIG_SCHED_SCALABLE`) if the red/black tree is not
   used elsewhere in the application, and pend/unpend operations on "small"
   queues will be somewhat slower (though this is not generally a performance
   path).
 
-* Simple linked-list wait_q (:option:`CONFIG_WAITQ_DUMB`)
+* Simple linked-list wait_q (:kconfig:`CONFIG_WAITQ_DUMB`)
 
   When selected, the wait_q will be implemented with a doubly-linked list.
   Choose this if you expect to have only a few threads blocked on any single
@@ -123,14 +135,14 @@ To overcome such problems, a cooperative thread can voluntarily relinquish
 the CPU from time to time to permit other threads to execute.
 A thread can relinquish the CPU in two ways:
 
-* Calling :cpp:func:`k_yield()` puts the thread at the back of the scheduler's
+* Calling :c:func:`k_yield` puts the thread at the back of the scheduler's
   prioritized list of ready threads, and then invokes the scheduler.
   All ready threads whose priority is higher or equal to that of the
   yielding thread are then allowed to execute before the yielding thread is
   rescheduled. If no such ready threads exist, the scheduler immediately
   reschedules the yielding thread without context switching.
 
-* Calling :cpp:func:`k_sleep()` makes the thread unready for a specified
+* Calling :c:func:`k_sleep` makes the thread unready for a specified
   time period. Ready threads of *all* priorities are then allowed to execute;
   however, there is no guarantee that threads whose priority is lower
   than that of the sleeping thread will actually be scheduled before
@@ -162,7 +174,7 @@ are measured in system clock ticks. The time slice size is configurable,
 but this size can be changed while the application is running.
 
 At the end of every time slice, the scheduler checks to see if the current
-thread is preemptible and, if so, implicitly invokes :cpp:func:`k_yield()`
+thread is preemptible and, if so, implicitly invokes :c:func:`k_yield`
 on behalf of the thread. This gives other ready threads of the same priority
 the opportunity to execute before the current thread is scheduled again.
 If no threads of equal priority are ready, the current thread remains
@@ -177,9 +189,7 @@ only when dealing with lower priority threads that are less time-sensitive.
    The kernel's time slicing algorithm does *not* ensure that a set
    of equal-priority threads receive an equitable amount of CPU time,
    since it does not measure the amount of time a thread actually gets to
-   execute. For example, a thread may become the current thread just before
-   the end of a time slice and then immediately have to yield the CPU.
-   However, the algorithm *does* ensure that a thread never executes
+   execute. However, the algorithm *does* ensure that a thread never executes
    for longer than a single time slice without being required to yield.
 
 Scheduler Locking
@@ -187,13 +197,13 @@ Scheduler Locking
 
 A preemptible thread that does not wish to be preempted while performing
 a critical operation can instruct the scheduler to temporarily treat it
-as a cooperative thread by calling :cpp:func:`k_sched_lock()`. This prevents
+as a cooperative thread by calling :c:func:`k_sched_lock`. This prevents
 other threads from interfering while the critical operation is being performed.
 
 Once the critical operation is complete the preemptible thread must call
-:cpp:func:`k_sched_unlock()` to restore its normal, preemptible status.
+:c:func:`k_sched_unlock` to restore its normal, preemptible status.
 
-If a thread calls :cpp:func:`k_sched_lock()` and subsequently performs an
+If a thread calls :c:func:`k_sched_lock` and subsequently performs an
 action that makes it unready, the scheduler will switch the locking thread out
 and allow other threads to execute. When the locking thread again
 becomes the current thread, its non-preemptible status is maintained.
@@ -202,52 +212,20 @@ becomes the current thread, its non-preemptible status is maintained.
     Locking out the scheduler is a more efficient way for a preemptible thread
     to prevent preemption than changing its priority level to a negative value.
 
-.. _metairq_priorities:
-
-Meta-IRQ Priorities
-===================
-
-When enabled (see :option:`CONFIG_NUM_METAIRQ_PRIORITIES`), there is a special
-subclass of cooperative priorities at the highest (numerically lowest)
-end of the priority space: meta-IRQ threads.  These are scheduled
-according to their normal priority, but also have the special ability
-to preempt all other threads (and other meta-irq threads) at lower
-priorities, even if those threads are cooperative and/or have taken a
-scheduler lock.
-
-This behavior makes the act of unblocking a meta-IRQ thread (by any
-means, e.g. creating it, calling k_sem_give(), etc.) into the
-equivalent of a synchronous system call when done by a lower
-priority thread, or an ARM-like "pended IRQ" when done from true
-interrupt context.  The intent is that this feature will be used to
-implement interrupt "bottom half" processing and/or "tasklet" features
-in driver subsystems.  The thread, once woken, will be guaranteed to
-run before the current CPU returns into application code.
-
-Unlike similar features in other OSes, meta-IRQ threads are true
-threads and run on their own stack (which must be allocated normally),
-not the per-CPU interrupt stack.  Design work to enable the use of the
-IRQ stack on supported architectures is pending.
-
-Note that because this breaks the promise made to cooperative
-threads by the Zephyr API (namely that the OS won't schedule other
-thread until the current thread deliberately blocks), it should be
-used only with great care from application code.  These are not simply
-very high priority threads and should not be used as such.
 
 .. _thread_sleeping:
 
 Thread Sleeping
 ===============
 
-A thread can call :cpp:func:`k_sleep()` to delay its processing
+A thread can call :c:func:`k_sleep` to delay its processing
 for a specified time period. During the time the thread is sleeping
 the CPU is relinquished to allow other ready threads to execute.
 Once the specified delay has elapsed the thread becomes ready
 and is eligible to be scheduled once again.
 
 A sleeping thread can be woken up prematurely by another thread using
-:cpp:func:`k_wakeup()`. This technique can sometimes be used
+:c:func:`k_wakeup`. This technique can sometimes be used
 to permit the secondary thread to signal the sleeping thread
 that something has occurred *without* requiring the threads
 to define a kernel synchronization object, such as a semaphore.
@@ -258,7 +236,7 @@ Waking up a thread that is not sleeping is allowed, but has no effect.
 Busy Waiting
 ============
 
-A thread can call :cpp:func:`k_busy_wait()` to perform a ``busy wait``
+A thread can call :c:func:`k_busy_wait` to perform a ``busy wait``
 that delays its processing for a specified time period
 *without* relinquishing the CPU to another ready thread.
 

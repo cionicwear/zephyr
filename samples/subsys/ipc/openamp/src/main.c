@@ -24,7 +24,7 @@
 K_THREAD_STACK_DEFINE(thread_stack, APP_TASK_STACK_SIZE);
 static struct k_thread thread_data;
 
-static struct device *ipm_handle;
+static const struct device *ipm_handle;
 
 static metal_phys_addr_t shm_physmap[] = { SHM_START_ADDR };
 static struct metal_device shm_device = {
@@ -85,7 +85,6 @@ static void virtio_set_features(struct virtio_device *vdev,
 static void virtio_notify(struct virtqueue *vq)
 {
 #if defined(CONFIG_SOC_MPS2_AN521) || \
-	defined(CONFIG_SOC_V2M_MUSCA_A) || \
 	defined(CONFIG_SOC_V2M_MUSCA_B1)
 	uint32_t current_core = sse_200_platform_get_cpu_id();
 
@@ -108,7 +107,8 @@ struct virtio_dispatch dispatch = {
 static K_SEM_DEFINE(data_sem, 0, 1);
 static K_SEM_DEFINE(data_rx_sem, 0, 1);
 
-static void platform_ipm_callback(void *context, uint32_t id, volatile void *data)
+static void platform_ipm_callback(const struct device *dev, void *context,
+				  uint32_t id, volatile void *data)
 {
 	k_sem_give(&data_sem);
 }
@@ -289,7 +289,6 @@ void main(void)
 			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 
 #if defined(CONFIG_SOC_MPS2_AN521) || \
-	defined(CONFIG_SOC_V2M_MUSCA_A) || \
 	defined(CONFIG_SOC_V2M_MUSCA_B1)
 	wakeup_cpu1();
 	k_msleep(500);
@@ -299,7 +298,7 @@ void main(void)
 /* Make sure we clear out the status flag very early (before we bringup the
  * secondary core) so the secondary core see's the proper status
  */
-int init_status_flag(struct device *arg)
+int init_status_flag(const struct device *arg)
 {
 	virtio_set_status(NULL, 0);
 

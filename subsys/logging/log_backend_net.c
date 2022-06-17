@@ -130,18 +130,20 @@ static int do_net_init(void)
 
 	} else if (IS_ENABLED(CONFIG_NET_IPV4) &&
 		   server_addr.sa_family == AF_INET) {
-		struct net_if_ipv4 *ipv4;
-		struct net_if *iface;
+		const struct in_addr *src;
 
-		iface = net_if_ipv4_select_src_iface(
-					&net_sin(&server_addr)->sin_addr);
-		ipv4 = iface->config.ip.ipv4;
+		src = net_if_ipv4_select_src_addr(
+				  NULL, &net_sin(&server_addr)->sin_addr);
 
-		net_ipaddr_copy(&local_addr4.sin_addr,
-				&ipv4->unicast[0].address.in_addr);
+		if (src) {
+			net_addr_ntop(AF_INET, src, dev_hostname,
+				      MAX_HOSTNAME_LEN);
 
-		net_addr_ntop(AF_INET, &local_addr4.sin_addr, dev_hostname,
-			      MAX_HOSTNAME_LEN);
+			net_ipaddr_copy(&local_addr4.sin_addr, src);
+		} else {
+			goto unknown;
+		}
+
 	} else {
 	unknown:
 		DBG("Cannot setup local context\n");
@@ -192,8 +194,25 @@ static void send_output(const struct log_backend *const backend,
 	log_msg_put(msg);
 }
 
-static void init_net(void)
+static void process(const struct log_backend *const backend,
+		    union log_msg2_generic *msg)
 {
+	uint32_t flags = LOG_OUTPUT_FLAG_FORMAT_SYSLOG | LOG_OUTPUT_FLAG_TIMESTAMP;
+
+	if (panic_mode) {
+		return;
+	}
+
+	if (!net_init_done && do_net_init() == 0) {
+		net_init_done = true;
+	}
+
+	log_output_msg2_process(&log_output_net, &msg->log, flags);
+}
+
+static void init_net(struct log_backend const *const backend)
+{
+	ARG_UNUSED(backend);
 	int ret;
 
 	net_sin(&server_addr)->sin_port = htons(514);
@@ -237,8 +256,9 @@ static void sync_string(const struct log_backend *const backend,
 const struct log_backend_api log_backend_net_api = {
 	.panic = panic,
 	.init = init_net,
-	.put = IS_ENABLED(CONFIG_LOG_IMMEDIATE) ? NULL : send_output,
-	.put_sync_string = IS_ENABLED(CONFIG_LOG_IMMEDIATE) ?
+	.process = IS_ENABLED(CONFIG_LOG2) ? process : NULL,
+	.put = IS_ENABLED(CONFIG_LOG_MODE_DEFERRED) ? send_output : NULL,
+	.put_sync_string = IS_ENABLED(CONFIG_LOG_MODE_IMMEDIATE) ?
 							sync_string : NULL,
 	/* Currently we do not send hexdumps over network to remote server
 	 * in CONFIG_LOG_IMMEDIATE mode. This is just to save resources,
@@ -250,7 +270,8 @@ const struct log_backend_api log_backend_net_api = {
 /* Note that the backend can be activated only after we have networking
  * subsystem ready so we must not start it immediately.
  */
-LOG_BACKEND_DEFINE(log_backend_net, log_backend_net_api, true);
+LOG_BACKEND_DEFINE(log_backend_net, log_backend_net_api,
+		   IS_ENABLED(CONFIG_LOG_BACKEND_NET_AUTOSTART));
 
 const struct log_backend *log_backend_net_get(void)
 {

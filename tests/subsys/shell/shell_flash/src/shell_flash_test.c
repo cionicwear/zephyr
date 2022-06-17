@@ -35,8 +35,8 @@ static void test_flash_read(void)
 		"00000020: 61 62 63                                         |abc              |",
 	};
 	const struct shell *shell = shell_backend_dummy_get_ptr();
-	static struct device *flash_dev;
-	const char *buf, *ptr;
+	static const struct device *flash_dev;
+	const char *buf;
 	const int test_base = FLASH_SIMULATOR_BASE_OFFSET;
 	const int test_size = 0x24;  /* 32-alignment required */
 	uint8_t data[test_size];
@@ -52,9 +52,6 @@ static void test_flash_read(void)
 	zassert_true(flash_dev != NULL,
 		     "Simulated flash driver was not found!");
 
-	ret = flash_write_protection_set(flash_dev, false);
-	zassert_equal(0, ret, NULL);
-
 	ret = flash_write(flash_dev, test_base, data, test_size);
 	zassert_equal(0, ret, "flash_write() failed: %d", ret);
 
@@ -62,18 +59,23 @@ static void test_flash_read(void)
 	zassert_equal(0, ret, "flash read failed: %d", ret);
 
 	buf = shell_backend_dummy_get_output(shell, &size);
-	for (i = 0, ptr = buf; i < ARRAY_SIZE(lines); i++) {
-		ptr += 2;  /* Skip \r\n */
-		zassert_false(strncmp(ptr, lines[i], strlen(lines[i])),
-			      "Incorrect line %d: %s", i, ptr);
-		ptr += strlen(lines[i]);  /* Skip to next line */
+	for (i = 0; i < ARRAY_SIZE(lines); i++) {
+		/* buf contains all the bytes that goes through the shell
+		 * backend interface including escape codes, NL and CR.
+		 * Function strstr finds place in the buffer where interesting
+		 * data is located.
+		 */
+		zassert_true(strstr(buf, lines[i]), "Line: %d not found", i);
 	}
 }
 
 void test_main(void)
 {
+	/* Let the shell backend intialize. */
+	k_usleep(10);
+
 	ztest_test_suite(shell_flash_test_suite,
-			ztest_unit_test(test_flash_read)
+			 ztest_unit_test(test_flash_read)
 			);
 
 	ztest_run_test_suite(shell_flash_test_suite);

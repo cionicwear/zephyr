@@ -22,6 +22,8 @@
 #define TRACING_BACKEND_NAME "tracing_backend_usb"
 #elif defined CONFIG_TRACING_BACKEND_POSIX
 #define TRACING_BACKEND_NAME "tracing_backend_posix"
+#elif defined CONFIG_TRACING_BACKEND_RAM
+#define TRACING_BACKEND_NAME "tracing_backend_ram"
 #else
 #define TRACING_BACKEND_NAME ""
 #endif
@@ -80,7 +82,7 @@ static void tracing_set_state(enum tracing_state state)
 	atomic_set(&tracing_state, state);
 }
 
-static int tracing_init(struct device *arg)
+static int tracing_init(const struct device *arg)
 {
 	ARG_UNUSED(arg);
 

@@ -15,14 +15,13 @@
 extern "C" {
 #endif
 
-#ifdef CONFIG_IRQ_OFFLOAD
-typedef void (*irq_offload_routine_t)(void *parameter);
+typedef void (*irq_offload_routine_t)(const void *parameter);
 
 /**
  * @brief Run a function in interrupt context
  *
  * This function synchronously runs the provided function in interrupt
- * context, passing in the supplied parameter. Useful for test code
+ * context, passing in the supplied device. Useful for test code
  * which needs to show that kernel objects work correctly in interrupt
  * context.
  *
@@ -30,8 +29,7 @@ typedef void (*irq_offload_routine_t)(void *parameter);
  * @param parameter Argument to pass to the function when it is run as an
  * interrupt
  */
-void irq_offload(irq_offload_routine_t routine, void *parameter);
-#endif
+void irq_offload(irq_offload_routine_t routine, const void *parameter);
 
 #ifdef __cplusplus
 }

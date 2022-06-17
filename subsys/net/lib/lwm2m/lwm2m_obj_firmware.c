@@ -17,6 +17,9 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include "lwm2m_object.h"
 #include "lwm2m_engine.h"
 
+#define FIRMWARE_VERSION_MAJOR 1
+#define FIRMWARE_VERSION_MINOR 0
+
 /* Firmware resource IDs */
 #define FIRMWARE_PACKAGE_ID			0
 #define FIRMWARE_PACKAGE_URI_ID			1
@@ -68,7 +71,7 @@ static struct lwm2m_engine_res res[FIRMWARE_MAX_ID];
 static struct lwm2m_engine_res_inst res_inst[RESOURCE_INSTANCE_COUNT];
 
 static lwm2m_engine_set_data_cb_t write_cb;
-static lwm2m_engine_user_cb_t update_cb;
+static lwm2m_engine_execute_cb_t update_cb;
 
 #ifdef CONFIG_LWM2M_FIRMWARE_UPDATE_PULL_SUPPORT
 extern int lwm2m_firmware_start_transfer(char *package_uri);
@@ -247,7 +250,10 @@ static int package_uri_write_cb(uint16_t obj_inst_id, uint16_t res_id,
 
 	if (state == STATE_IDLE) {
 		lwm2m_firmware_set_update_result(RESULT_DEFAULT);
-		lwm2m_firmware_start_transfer(package_uri);
+
+		if (data_len > 0) {
+			lwm2m_firmware_start_transfer(package_uri);
+		}
 	} else if (state == STATE_DOWNLOADED && data_len == 0U) {
 		/* reset to state idle and result default */
 		lwm2m_firmware_set_update_result(RESULT_DEFAULT);
@@ -269,19 +275,20 @@ lwm2m_engine_set_data_cb_t lwm2m_firmware_get_write_cb(void)
 	return write_cb;
 }
 
-void lwm2m_firmware_set_update_cb(lwm2m_engine_user_cb_t cb)
+void lwm2m_firmware_set_update_cb(lwm2m_engine_execute_cb_t cb)
 {
 	update_cb = cb;
 }
 
-lwm2m_engine_user_cb_t lwm2m_firmware_get_update_cb(void)
+lwm2m_engine_execute_cb_t lwm2m_firmware_get_update_cb(void)
 {
 	return update_cb;
 }
 
-static int firmware_update_cb(uint16_t obj_inst_id)
+static int firmware_update_cb(uint16_t obj_inst_id,
+			      uint8_t *args, uint16_t args_len)
 {
-	lwm2m_engine_user_cb_t callback;
+	lwm2m_engine_execute_cb_t callback;
 	uint8_t state;
 	int ret;
 
@@ -295,7 +302,7 @@ static int firmware_update_cb(uint16_t obj_inst_id)
 
 	callback = lwm2m_firmware_get_update_cb();
 	if (callback) {
-		ret = callback(obj_inst_id);
+		ret = callback(obj_inst_id, args, args_len);
 		if (ret < 0) {
 			LOG_ERR("Failed to update firmware: %d", ret);
 			lwm2m_firmware_set_update_result(
@@ -315,11 +322,11 @@ static struct lwm2m_engine_obj_inst *firmware_create(uint16_t obj_inst_id)
 	init_res_instance(res_inst, ARRAY_SIZE(res_inst));
 
 	/* initialize instance resource data */
-	INIT_OBJ_RES_OPT(FIRMWARE_PACKAGE_ID, res, i, res_inst, j, 1, true,
-			 NULL, NULL, package_write_cb, NULL);
-	INIT_OBJ_RES(FIRMWARE_PACKAGE_URI_ID, res, i, res_inst, j, 1, true,
-		     package_uri, PACKAGE_URI_LEN,
-		     NULL, NULL, package_uri_write_cb, NULL);
+	INIT_OBJ_RES_OPT(FIRMWARE_PACKAGE_ID, res, i, res_inst, j, 1, false,
+			 true, NULL, NULL, NULL, package_write_cb, NULL);
+	INIT_OBJ_RES(FIRMWARE_PACKAGE_URI_ID, res, i, res_inst, j, 1, false,
+		     true, package_uri, PACKAGE_URI_LEN,
+		     NULL, NULL, NULL, package_uri_write_cb, NULL);
 	INIT_OBJ_RES_EXECUTE(FIRMWARE_UPDATE_ID, res, i, firmware_update_cb);
 	INIT_OBJ_RES_DATA(FIRMWARE_STATE_ID, res, i, res_inst, j,
 			  &update_state, sizeof(update_state));
@@ -335,7 +342,7 @@ static struct lwm2m_engine_obj_inst *firmware_create(uint16_t obj_inst_id)
 	return &inst;
 }
 
-static int lwm2m_firmware_init(struct device *dev)
+static int lwm2m_firmware_init(const struct device *dev)
 {
 	struct lwm2m_engine_obj_inst *obj_inst = NULL;
 	int ret = 0;
@@ -353,6 +360,9 @@ static int lwm2m_firmware_init(struct device *dev)
 #endif
 
 	firmware.obj_id = LWM2M_OBJECT_FIRMWARE_ID;
+	firmware.version_major = FIRMWARE_VERSION_MAJOR;
+	firmware.version_minor = FIRMWARE_VERSION_MINOR;
+	firmware.is_core = true;
 	firmware.fields = fields;
 	firmware.field_count = ARRAY_SIZE(fields);
 	firmware.max_instance_count = 1U;

@@ -7,16 +7,16 @@ include: spi-device.yaml
 properties:
     reset-gpios:
       type: phandle-array
-      required: true
+      required: false
       description: |
-        GPIO connected to the modem's NRST signal.
+        GPIO connected to the modem's NRESET signal.
 
         This signal is open-drain, active-low as interpreted by the
         modem.
 
     busy-gpios:
       type: phandle-array
-      required: true
+      required: false
       description: |
         GPIO connected to the modem's BUSY signal.
 
@@ -26,9 +26,23 @@ properties:
       description: |
         Antenna power enable pin.
 
+    tx-enable-gpios:
+      type: phandle-array
+      required: false
+      description: |
+        Antenna switch TX enable GPIO. If set, the driver tracks the
+        state of the radio and controls the RF switch.
+
+    rx-enable-gpios:
+      type: phandle-array
+      required: false
+      description: |
+        Antenna switch RX enable GPIO. If set, the driver tracks the
+        state of the radio and controls the RF switch.
+
     dio1-gpios:
       type: phandle-array
-      required: true
+      required: false
       description: |
         GPIO connected to DIO1. This GPIO will be used as a generic
         IRQ line from the chip.

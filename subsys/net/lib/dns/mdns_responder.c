@@ -6,6 +6,7 @@
 
 /*
  * Copyright (c) 2017 Intel Corporation
+ * Copyright (c) 2020 Friedt Professional Engineering Services, Inc
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -20,10 +21,12 @@ LOG_MODULE_REGISTER(net_mdns_responder, CONFIG_MDNS_RESPONDER_LOG_LEVEL);
 #include <errno.h>
 #include <stdlib.h>
 
+#include <net/net_core.h>
 #include <net/net_ip.h>
 #include <net/net_pkt.h>
 #include <net/dns_resolve.h>
 
+#include "dns_sd.h"
 #include "dns_pack.h"
 #include "ipv6.h"
 
@@ -48,10 +51,14 @@ static struct net_context *ipv6;
 #define DNS_RESOLVER_BUF_CTR	(DNS_RESOLVER_MIN_BUF + \
 				 CONFIG_MDNS_RESOLVER_ADDITIONAL_BUF_CTR)
 
+#ifndef CONFIG_NET_TEST
+static int setup_dst_addr(struct net_context *ctx, struct net_pkt *pkt,
+			  struct sockaddr *dst, socklen_t *dst_len);
+#endif /* CONFIG_NET_TEST */
+
 NET_BUF_POOL_DEFINE(mdns_msg_pool, DNS_RESOLVER_BUF_CTR,
 		    DNS_RESOLVER_MAX_BUF_SIZE, 0, NULL);
 
-#if defined(CONFIG_NET_IPV6)
 static void create_ipv6_addr(struct sockaddr_in6 *addr)
 {
 	addr->sin6_family = AF_INET6;
@@ -61,9 +68,7 @@ static void create_ipv6_addr(struct sockaddr_in6 *addr)
 	net_ipv6_addr_create(&addr->sin6_addr,
 			     0xff02, 0, 0, 0, 0, 0, 0, 0x00fb);
 }
-#endif
 
-#if defined(CONFIG_NET_IPV4)
 static void create_ipv4_addr(struct sockaddr_in *addr)
 {
 	addr->sin_family = AF_INET;
@@ -72,7 +77,26 @@ static void create_ipv4_addr(struct sockaddr_in *addr)
 	/* Well known IPv4 224.0.0.251 address */
 	addr->sin_addr.s_addr = htonl(0xE00000FB);
 }
-#endif
+
+int setup_dst_addr(struct net_context *ctx, struct net_pkt *pkt,
+		   struct sockaddr *dst, socklen_t *dst_len)
+{
+	if (IS_ENABLED(CONFIG_NET_IPV4) &&
+	    net_pkt_family(pkt) == AF_INET) {
+		create_ipv4_addr(net_sin(dst));
+		*dst_len = sizeof(struct sockaddr_in);
+		net_context_set_ipv4_ttl(ctx, 255);
+	} else if (IS_ENABLED(CONFIG_NET_IPV6) &&
+		   net_pkt_family(pkt) == AF_INET6) {
+		create_ipv6_addr(net_sin6(dst));
+		*dst_len = sizeof(struct sockaddr_in6);
+		net_context_set_ipv6_hop_limit(ctx, 255);
+	} else {
+		return -EPFNOSUPPORT;
+	}
+
+	return 0;
+}
 
 static struct net_context *get_ctx(sa_family_t family)
 {
@@ -218,48 +242,34 @@ static int send_response(struct net_context *ctx,
 	socklen_t dst_len;
 	int ret;
 
-	if (qtype == DNS_RR_TYPE_A) {
-#if defined(CONFIG_NET_IPV4)
+	ret = setup_dst_addr(ctx, pkt, &dst, &dst_len);
+	if (ret < 0) {
+		NET_DBG("unable to set up the response address");
+		return ret;
+	}
+
+	if (IS_ENABLED(CONFIG_NET_IPV4) && qtype == DNS_RR_TYPE_A) {
 		const struct in_addr *addr;
 
 		addr = net_if_ipv4_select_src_addr(net_pkt_iface(pkt),
 						   &ip_hdr->ipv4->src);
-
-		create_ipv4_addr(net_sin(&dst));
-		dst_len = sizeof(struct sockaddr_in);
 
 		ret = create_answer(ctx, query, qtype,
 				      sizeof(struct in_addr), (uint8_t *)addr);
 		if (ret != 0) {
 			return ret;
 		}
-
-		net_context_set_ipv4_ttl(ctx, 255);
-#else /* CONFIG_NET_IPV4 */
-		return -EPFNOSUPPORT;
-#endif /* CONFIG_NET_IPV4 */
-
-	} else if (qtype == DNS_RR_TYPE_AAAA) {
-#if defined(CONFIG_NET_IPV6)
+	} else if (IS_ENABLED(CONFIG_NET_IPV6) && qtype == DNS_RR_TYPE_AAAA) {
 		const struct in6_addr *addr;
 
 		addr = net_if_ipv6_select_src_addr(net_pkt_iface(pkt),
 						   &ip_hdr->ipv6->src);
-
-		create_ipv6_addr(net_sin6(&dst));
-		dst_len = sizeof(struct sockaddr_in6);
 
 		ret = create_answer(ctx, query, qtype,
 				      sizeof(struct in6_addr), (uint8_t *)addr);
 		if (ret != 0) {
 			return -ENOMEM;
 		}
-
-		net_context_set_ipv6_hop_limit(ctx, 255);
-#else /* CONFIG_NET_IPV6 */
-		return -EPFNOSUPPORT;
-#endif /* CONFIG_NET_IPV6 */
-
 	} else {
 		/* TODO: support also service PTRs */
 		return -EINVAL;
@@ -272,6 +282,139 @@ static int send_response(struct net_context *ctx,
 	}
 
 	return ret;
+}
+
+static const char *qtype_to_string(int qtype)
+{
+	switch (qtype) {
+	case DNS_RR_TYPE_A: return "A";
+	case DNS_RR_TYPE_CNAME: return "CNAME";
+	case DNS_RR_TYPE_PTR: return "PTR";
+	case DNS_RR_TYPE_TXT: return "TXT";
+	case DNS_RR_TYPE_AAAA: return "AAAA";
+	case DNS_RR_TYPE_SRV: return "SRV";
+	default: return "<unknown type>";
+	}
+}
+
+static void send_sd_response(struct net_context *ctx,
+		 struct net_pkt *pkt, union net_ip_header *ip_hdr,
+		 struct dns_msg_t *dns_msg, struct net_buf *result)
+{
+	int ret;
+	const struct dns_sd_rec *record;
+	/* filter must be zero-initialized for "wildcard" port */
+	struct dns_sd_rec filter = {0};
+	struct sockaddr dst;
+	socklen_t dst_len;
+	bool service_type_enum = false;
+	const struct in6_addr *addr6 = NULL;
+	const struct in_addr *addr4 = NULL;
+	char instance_buf[DNS_SD_SERVICE_MAX_SIZE + 1];
+	char service_buf[DNS_SD_SERVICE_MAX_SIZE + 1];
+	char proto_buf[DNS_SD_PROTO_SIZE + 1];
+	char domain_buf[DNS_SD_DOMAIN_MAX_SIZE + 1];
+	char *label[4];
+	size_t size[] = {
+		ARRAY_SIZE(instance_buf),
+		ARRAY_SIZE(service_buf),
+		ARRAY_SIZE(proto_buf),
+		ARRAY_SIZE(domain_buf),
+	};
+	size_t n = ARRAY_SIZE(label);
+
+	BUILD_ASSERT(ARRAY_SIZE(label) == ARRAY_SIZE(size), "");
+
+	/*
+	 * work around for bug in compliance scripts which say that the array
+	 * should be static const (incorrect)
+	 */
+	label[0] = instance_buf;
+	label[1] = service_buf;
+	label[2] = proto_buf;
+	label[3] = domain_buf;
+
+	/* This actually is used but the compiler doesn't see that */
+	ARG_UNUSED(record);
+
+	ret = setup_dst_addr(ctx, pkt, &dst, &dst_len);
+	if (ret < 0) {
+		NET_DBG("unable to set up the response address");
+		return;
+	}
+
+	if (IS_ENABLED(CONFIG_NET_IPV4)) {
+		/* Look up the local IPv4 address */
+		addr4 = net_if_ipv4_select_src_addr(net_pkt_iface(pkt),
+					   &ip_hdr->ipv4->src);
+	}
+
+	if (IS_ENABLED(CONFIG_NET_IPV6)) {
+		/* Look up the local IPv6 address */
+		addr6 = net_if_ipv6_select_src_addr(net_pkt_iface(pkt),
+					   &ip_hdr->ipv6->src);
+	}
+
+	ret = dns_sd_query_extract(dns_msg->msg,
+		dns_msg->msg_size, &filter, label, size, &n);
+	if (ret < 0) {
+		NET_DBG("unable to extract query (%d)", ret);
+		return;
+	}
+
+	if (IS_ENABLED(CONFIG_MDNS_RESPONDER_DNS_SD_SERVICE_TYPE_ENUMERATION)
+		&& dns_sd_is_service_type_enumeration(&filter)) {
+
+		/*
+		 * RFC 6763, Section 9
+		 *
+		 * A DNS query for PTR records with the name
+		 * "_services._dns-sd._udp.<Domain>" yields a set of PTR records,
+		 * where the rdata of each PTR record is the two-label <Service> name,
+		 * plus the same domain, e.g., "_http._tcp.<Domain>".
+		 */
+		dns_sd_create_wildcard_filter(&filter);
+		service_type_enum = true;
+	}
+
+	DNS_SD_FOREACH(record) {
+		/* Checks validity and then compare */
+		if (dns_sd_rec_match(record, &filter)) {
+			NET_DBG("matched query: %s.%s.%s.%s port: %u",
+				record->instance, record->service,
+				record->proto, record->domain,
+				ntohs(*(record->port)));
+
+			/* Construct the response */
+			if (service_type_enum) {
+				ret = dns_sd_handle_service_type_enum(record, addr4, addr6,
+					result->data, result->size);
+				if (ret < 0) {
+					NET_DBG("dns_sd_handle_service_type_enum() failed (%d)",
+						ret);
+					continue;
+				}
+			} else {
+				ret = dns_sd_handle_ptr_query(record, addr4, addr6,
+					result->data, result->size);
+				if (ret < 0) {
+					NET_DBG("dns_sd_handle_ptr_query() failed (%d)", ret);
+					continue;
+				}
+			}
+
+			result->len = ret;
+
+			/* Send the response */
+			ret = net_context_sendto(ctx, result->data,
+				result->len, &dst, dst_len, NULL,
+				K_NO_WAIT, NULL);
+			if (ret < 0) {
+				NET_DBG("Cannot send mDNS reply (%d)", ret);
+				continue;
+			}
+		}
+	}
 }
 
 static int dns_read(struct net_context *ctx,
@@ -344,7 +487,7 @@ static int dns_read(struct net_context *ctx,
 		}
 
 		NET_DBG("[%d] query %s/%s label %s (%d bytes)", queries,
-			qtype == DNS_RR_TYPE_A ? "A" : "AAAA", "IN",
+			qtype_to_string(qtype), "IN",
 			log_strdup(result->data), ret);
 
 		/* If the query matches to our hostname, then send reply.
@@ -355,9 +498,13 @@ static int dns_read(struct net_context *ctx,
 		    (result->len - 1) >= hostname_len &&
 		    &(result->data + 1)[hostname_len] == lquery) {
 			NET_DBG("mDNS query to our hostname %s.local",
-				hostname);
+				log_strdup(hostname));
 			send_response(ctx, pkt, ip_hdr, result, qtype);
+		} else if (IS_ENABLED(CONFIG_MDNS_RESPONDER_DNS_SD)
+			&& qtype == DNS_RR_TYPE_PTR) {
+			send_sd_response(ctx, pkt, ip_hdr, &dns_msg, result);
 		}
+
 	} while (--queries);
 
 	ret = 0;
@@ -514,9 +661,9 @@ ipv4_out:
 	return !ok;
 }
 
-static int mdns_responder_init(struct device *device)
+static int mdns_responder_init(const struct device *dev)
 {
-	ARG_UNUSED(device);
+	ARG_UNUSED(dev);
 
 	return init_listener();
 }

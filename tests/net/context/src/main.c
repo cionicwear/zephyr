@@ -857,14 +857,14 @@ struct net_context_test {
 	struct net_linkaddr ll_addr;
 };
 
-int net_context_dev_init(struct device *dev)
+int net_context_dev_init(const struct device *dev)
 {
 	return 0;
 }
 
-static uint8_t *net_context_get_mac(struct device *dev)
+static uint8_t *net_context_get_mac(const struct device *dev)
 {
-	struct net_context_test *context = dev->driver_data;
+	struct net_context_test *context = dev->data;
 
 	if (context->mac_addr[2] == 0x00) {
 		/* 00-00-5E-00-53-xx Documentation RFC 7042 */
@@ -887,7 +887,7 @@ static void net_context_iface_init(struct net_if *iface)
 			     NET_LINK_ETHERNET);
 }
 
-static int tester_send(struct device *dev, struct net_pkt *pkt)
+static int tester_send(const struct device *dev, struct net_pkt *pkt)
 {
 	struct net_udp_hdr hdr, *udp_hdr;
 
@@ -968,7 +968,7 @@ static struct dummy_api net_context_if_api = {
 #define _ETH_L2_CTX_TYPE NET_L2_GET_CTX_TYPE(DUMMY_L2)
 
 NET_DEVICE_INIT(net_context_test, "net_context_test",
-		net_context_dev_init, device_pm_control_nop,
+		net_context_dev_init, NULL,
 		&net_context_data, NULL,
 		CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
 		&net_context_if_api, _ETH_L2_LAYER,
@@ -978,8 +978,9 @@ static void test_init(void)
 {
 	struct net_if_addr *ifaddr;
 	struct net_if_mcast_addr *maddr;
-	struct net_if *iface = net_if_get_default();
+	struct net_if *iface;
 
+	iface = net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY));
 	zassert_not_null(iface, "Interface is NULL");
 
 	ifaddr = net_if_ipv6_addr_add(iface, &in6addr_my,

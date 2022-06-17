@@ -106,20 +106,20 @@ BLE-enabled builds that can be produced from the Zephyr project codebase:
   and responding with events and received data.  A build of this type sets the
   following Kconfig option values:
 
-  * :option:`CONFIG_BT` ``=y``
-  * :option:`CONFIG_BT_HCI` ``=y``
-  * :option:`CONFIG_BT_HCI_RAW` ``=y``
-  * :option:`CONFIG_BT_CTLR` ``=y``
-  * :option:`CONFIG_BT_LL_SW_SPLIT` ``=y`` (if using the open source Link Layer)
+  * :kconfig:`CONFIG_BT` ``=y``
+  * :kconfig:`CONFIG_BT_HCI` ``=y``
+  * :kconfig:`CONFIG_BT_HCI_RAW` ``=y``
+  * :kconfig:`CONFIG_BT_CTLR` ``=y``
+  * :kconfig:`CONFIG_BT_LL_SW_SPLIT` ``=y`` (if using the open source Link Layer)
 
 * **Host-only build**: A Zephyr OS Host build will contain the Application and
   the BLE Host, along with an HCI driver (UART or SPI) to interface with an
   external Controller chip.
   A build of this type sets the following Kconfig option values:
 
-  * :option:`CONFIG_BT` ``=y``
-  * :option:`CONFIG_BT_HCI` ``=y``
-  * :option:`CONFIG_BT_CTLR` ``=n``
+  * :kconfig:`CONFIG_BT` ``=y``
+  * :kconfig:`CONFIG_BT_HCI` ``=y``
+  * :kconfig:`CONFIG_BT_CTLR` ``=n``
 
   All of the samples located in ``samples/bluetooth`` except for the ones
   used for Controller-only builds can be built as Host-only
@@ -128,10 +128,10 @@ BLE-enabled builds that can be produced from the Zephyr project codebase:
   Controller, and it is used exclusively for single-chip (SoC) configurations.
   A build of this type sets the following Kconfig option values:
 
-  * :option:`CONFIG_BT` ``=y``
-  * :option:`CONFIG_BT_HCI` ``=y``
-  * :option:`CONFIG_BT_CTLR` ``=y``
-  * :option:`CONFIG_BT_LL_SW_SPLIT` ``=y`` (if using the open source Link Layer)
+  * :kconfig:`CONFIG_BT` ``=y``
+  * :kconfig:`CONFIG_BT_HCI` ``=y``
+  * :kconfig:`CONFIG_BT_CTLR` ``=y``
+  * :kconfig:`CONFIG_BT_LL_SW_SPLIT` ``=y`` (if using the open source Link Layer)
 
   All of the samples located in ``samples/bluetooth`` except for the ones
   used for Controller-only builds can be built as Combined
@@ -243,12 +243,12 @@ four distinct roles of BLE usage:
   * Observer (scanning for BLE advertisements)
 
 Each role comes with its own build-time configuration option:
-:option:`CONFIG_BT_PERIPHERAL`, :option:`CONFIG_BT_CENTRAL`,
-:option:`CONFIG_BT_BROADCASTER` & :option:`CONFIG_BT_OBSERVER`. Of the
+:kconfig:`CONFIG_BT_PERIPHERAL`, :kconfig:`CONFIG_BT_CENTRAL`,
+:kconfig:`CONFIG_BT_BROADCASTER` & :kconfig:`CONFIG_BT_OBSERVER`. Of the
 connection-oriented roles central implicitly enables observer role, and
 peripheral implicitly enables broadcaster role. Usually the first step
 when creating an application is to decide which roles are needed and go
-from there. Bluetooth Mesh is a slightly special case, requiring at
+from there. Bluetooth mesh is a slightly special case, requiring at
 least the observer and broadcaster roles, and possibly also the
 Peripheral role. This will be described in more detail in a later
 section.
@@ -259,8 +259,8 @@ Peripheral role
 Most Zephyr-based BLE devices will most likely be peripheral-role
 devices. This means that they perform connectable advertising and expose
 one or more GATT services. After registering services using the
-:cpp:func:`bt_gatt_service_register` API the application will typically
-start connectable advertising using the :cpp:func:`bt_le_adv_start` API.
+:c:func:`bt_gatt_service_register` API the application will typically
+start connectable advertising using the :c:func:`bt_le_adv_start` API.
 
 There are several peripheral sample applications available in the tree,
 such as :zephyr_file:`samples/bluetooth/peripheral_hr`.
@@ -277,12 +277,12 @@ client, first performing discovery of available services and then
 accessing one or more supported services.
 
 To initially discover a device to connect to the application will likely
-use the :cpp:func:`bt_le_scan_start` API, wait for an appropriate device
+use the :c:func:`bt_le_scan_start` API, wait for an appropriate device
 to be found (using the scan callback), stop scanning using
-:cpp:func:`bt_le_scan_stop` and then connect to the device using
-:cpp:func:`bt_conn_create_le`. If the central wants to keep
+:c:func:`bt_le_scan_stop` and then connect to the device using
+:c:func:`bt_conn_create_le`. If the central wants to keep
 automatically reconnecting to the peripheral it should use the
-:cpp:func:`bt_le_set_auto_conn` API.
+:c:func:`bt_le_set_auto_conn` API.
 
 There are some sample applications for the central role available in the
 tree, such as :zephyr_file:`samples/bluetooth/central_hr`.
@@ -290,7 +290,7 @@ tree, such as :zephyr_file:`samples/bluetooth/central_hr`.
 Observer role
 =============
 
-An observer role device will use the :cpp:func:`bt_le_scan_start` API to
+An observer role device will use the :c:func:`bt_le_scan_start` API to
 scan for device, but it will not connect to any of them. Instead it will
 simply utilize the advertising data of found devices, combining it
 optionally with the received signal strength (RSSI).
@@ -298,7 +298,7 @@ optionally with the received signal strength (RSSI).
 Broadcaster role
 ================
 
-A broadcaster role device will use the :cpp:func:`bt_le_adv_start` API to
+A broadcaster role device will use the :c:func:`bt_le_adv_start` API to
 advertise specific advertising data, but the type of advertising will be
 non-connectable, i.e. other device will not be able to connect to it.
 
@@ -314,14 +314,14 @@ Security
 To achieve a secure relationship between two Bluetooth devices a process
 called pairing is used. This process can either be triggered implicitly
 through the security properties of GATT services, or explicitly using
-the :cpp:func:`bt_conn_security` API on a connection object.
+the :c:func:`bt_conn_security` API on a connection object.
 
 To achieve a higher security level, and protect against
 Man-In-The-Middle (MITM) attacks, it is recommended to use some
 out-of-band channel during the pairing. If the devices have a sufficient
 user interface this "channel" is the user itself. The capabilities of
-the device are registered using the :cpp:func:`bt_conn_auth_cb_register`
-API.  The :c:type:`bt_conn_auth_cb` struct that's passed to this API has
+the device are registered using the :c:func:`bt_conn_auth_cb_register`
+API.  The :c:struct:`bt_conn_auth_cb` struct that's passed to this API has
 a set of optional callbacks that can be used during the pairing - if the
 device lacks some feature the corresponding callback may be set to NULL.
 For example, if the device does not have an input method but does have a
@@ -332,17 +332,17 @@ capable of displaying a passkey to the user.
 Depending on the local and remote security requirements & capabilities,
 there are four possible security levels that can be reached:
 
-    :cpp:enumerator:`BT_SECURITY_LOW`
+    :c:enumerator:`BT_SECURITY_L1`
         No encryption and no authentication.
 
-    :cpp:enumerator:`BT_SECURITY_MEDIUM`
+    :c:enumerator:`BT_SECURITY_L2`
         Encryption but no authentication (no MITM protection).
 
-    :cpp:enumerator:`BT_SECURITY_HIGH`
+    :c:enumerator:`BT_SECURITY_L3`
         Encryption and authentication using the legacy pairing method
         from Bluetooth 4.0 and 4.1.
 
-    :cpp:enumerator:`BT_SECURITY_FIPS`
+    :c:enumerator:`BT_SECURITY_L4`
         Encryption and authentication using the LE Secure Connections
         feature available since Bluetooth 4.2.
 
@@ -376,7 +376,7 @@ default, mesh requires both observer and broadcaster role to be enabled.
 If the optional GATT Proxy feature is desired, then peripheral role
 should also be enabled.
 
-The API reference for Mesh can be found in the
+The API reference for mesh can be found in the
 :ref:`Mesh API reference section <bluetooth_mesh>`.
 
 .. _bluetooth-persistent-storage:

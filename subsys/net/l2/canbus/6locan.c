@@ -10,6 +10,7 @@ LOG_MODULE_REGISTER(net_l2_canbus, CONFIG_NET_L2_CANBUS_LOG_LEVEL);
 #include <net/net_core.h>
 #include <net/net_l2.h>
 #include <net/net_if.h>
+#include <net/capture.h>
 #include <net/net_pkt.h>
 #include <net/can.h>
 #include "canbus_internal.h"
@@ -37,7 +38,7 @@ extern uint16_t net_calc_chksum(struct net_pkt *pkt, uint8_t proto);
 static struct canbus_l2_ctx l2_ctx;
 
 static struct k_work_q net_canbus_workq;
-K_THREAD_STACK_DEFINE(net_canbus_stack, 512);
+K_KERNEL_STACK_DEFINE(net_canbus_stack, 512);
 
 char *net_sprint_addr(sa_family_t af, const void *addr);
 
@@ -105,45 +106,55 @@ static void canbus_rx_report_err(struct net_pkt *pkt)
 	net_pkt_unref(pkt);
 }
 
-static void rx_err_work_handler(struct k_work *item)
+static void rx_err_work_handler(struct net_pkt *pkt)
 {
-	struct net_pkt *pkt = CONTAINER_OF(item, struct net_pkt, work);
-
 	canbus_rx_report_err(pkt);
 }
 
-static void canbus_rx_report_err_from_isr(struct net_pkt *pkt)
+static void submit_to_queue(struct k_fifo *queue, struct net_pkt *pkt)
 {
-	k_work_init(&pkt->work, rx_err_work_handler);
-	k_work_submit_to_queue(&net_canbus_workq, &pkt->work);
+	k_fifo_put(queue, pkt);
+}
+
+static void canbus_rx_report_err_from_isr(struct k_fifo *queue,
+					  struct net_pkt *pkt)
+{
+	submit_to_queue(queue, pkt);
 }
 
 static void canbus_tx_timeout(struct _timeout *t)
 {
 	struct canbus_isotp_tx_ctx *ctx =
 		CONTAINER_OF(t, struct canbus_isotp_tx_ctx, timeout);
+	struct net_if *iface = net_pkt_iface(ctx->pkt);
+	struct canbus_net_ctx *net_ctx = net_if_l2_data(iface);
 
 	NET_ERR("TX Timeout. CTX: %p", ctx);
 	ctx->state = NET_CAN_TX_STATE_ERR;
-	k_work_submit_to_queue(&net_canbus_workq, &ctx->pkt->work);
+
+	submit_to_queue(&net_ctx->tx_queue, ctx->pkt);
 }
 
 static void canbus_rx_timeout(struct _timeout *t)
 {
 	struct canbus_isotp_rx_ctx *ctx =
 		CONTAINER_OF(t, struct canbus_isotp_rx_ctx, timeout);
+	struct net_if *iface = net_pkt_iface(ctx->pkt);
+	struct canbus_net_ctx *net_ctx = net_if_l2_data(iface);
 
 	NET_ERR("RX Timeout. CTX: %p", ctx);
 	ctx->state = NET_CAN_RX_STATE_TIMEOUT;
-	canbus_rx_report_err_from_isr(ctx->pkt);
+	canbus_rx_report_err_from_isr(&net_ctx->rx_err_queue, ctx->pkt);
 }
 
 static void canbus_st_min_timeout(struct _timeout *t)
 {
 	struct canbus_isotp_tx_ctx *ctx =
 		CONTAINER_OF(t, struct canbus_isotp_tx_ctx, timeout);
+	struct net_if *iface = net_pkt_iface(ctx->pkt);
+	struct canbus_net_ctx *net_ctx = net_if_l2_data(iface);
 
-	k_work_submit_to_queue(&net_canbus_workq, &ctx->pkt->work);
+	submit_to_queue(&net_ctx->tx_queue, ctx->pkt);
 }
 
 static k_timeout_t canbus_stmin_to_ticks(uint8_t stmin)
@@ -395,10 +406,10 @@ static void canbus_set_frame_addr(struct zcan_frame *frame,
 	frame->id_type = CAN_EXTENDED_IDENTIFIER;
 	frame->rtr = CAN_DATAFRAME;
 
-	frame->ext_id = canbus_addr_to_id(dest->addr, src->addr);
+	frame->id = canbus_addr_to_id(dest->addr, src->addr);
 
 	if (mcast) {
-		frame->ext_id |= CAN_NET_IF_ADDR_MCAST_MASK;
+		frame->id |= CAN_NET_IF_ADDR_MCAST_MASK;
 	}
 }
 
@@ -426,11 +437,11 @@ static void canbus_fc_send_cb(uint32_t err_flags, void *arg)
 	}
 }
 
-static int canbus_send_fc(struct device *net_can_dev,
+static int canbus_send_fc(const struct device *net_can_dev,
 			  struct net_canbus_lladdr *dest,
 			  struct net_canbus_lladdr *src, uint8_t fs)
 {
-	const struct net_can_api *api = net_can_dev->driver_api;
+	const struct net_can_api *api = net_can_dev->api;
 	struct zcan_frame frame = {
 		.id_type = CAN_EXTENDED_IDENTIFIER,
 		.rtr = CAN_DATAFRAME,
@@ -447,7 +458,7 @@ static int canbus_send_fc(struct device *net_can_dev,
 	frame.data[2] = NET_CAN_STMIN;
 	canbus_set_frame_datalength(&frame, 3);
 
-	NET_DBG("Sending FC to ID: 0x%08x", frame.ext_id);
+	NET_DBG("Sending FC to ID: 0x%08x", frame.id);
 	return api->send(net_can_dev, &frame, canbus_fc_send_cb, NULL,
 			 K_FOREVER);
 }
@@ -497,7 +508,7 @@ static enum net_verdict canbus_process_cf(struct net_pkt *pkt)
 {
 	struct canbus_isotp_rx_ctx *rx_ctx;
 	enum net_verdict ret;
-	struct device *net_can_dev;
+	const struct device *net_can_dev;
 	struct net_canbus_lladdr src, dest;
 	bool mcast;
 
@@ -557,7 +568,7 @@ static enum net_verdict canbus_process_cf(struct net_pkt *pkt)
 
 static enum net_verdict canbus_process_ff(struct net_pkt *pkt)
 {
-	struct device *net_can_dev = net_if_get_device(pkt->iface);
+	const struct device *net_can_dev = net_if_get_device(pkt->iface);
 	struct canbus_isotp_rx_ctx *rx_ctx = NULL;
 	struct net_pkt *new_pkt = NULL;
 	int ret;
@@ -681,6 +692,8 @@ static void canbus_tx_frame_isr(uint32_t err_flags, void *arg)
 {
 	struct net_pkt *pkt = (struct net_pkt *)arg;
 	struct canbus_isotp_tx_ctx *ctx = pkt->canbus_tx_ctx;
+	struct net_if *iface = net_pkt_iface(pkt);
+	struct canbus_net_ctx *net_ctx = net_if_l2_data(iface);
 
 	ctx->tx_backlog--;
 
@@ -692,14 +705,14 @@ static void canbus_tx_frame_isr(uint32_t err_flags, void *arg)
 		ctx->state = NET_CAN_TX_STATE_FIN;
 	}
 
-	k_work_submit_to_queue(&net_canbus_workq, &pkt->work);
+	submit_to_queue(&net_ctx->tx_queue, pkt);
 }
 
 static inline int canbus_send_cf(struct net_pkt *pkt)
 {
 	struct canbus_isotp_tx_ctx *ctx = pkt->canbus_tx_ctx;
-	struct device *net_can_dev = net_if_get_device(pkt->iface);
-	const struct net_can_api *api = net_can_dev->driver_api;
+	const struct device *net_can_dev = net_if_get_device(pkt->iface);
+	const struct net_can_api *api = net_can_dev->api;
 	struct zcan_frame frame;
 	struct net_pkt_cursor cursor_backup;
 	int ret, len;
@@ -791,13 +804,6 @@ static void canbus_tx_work(struct net_pkt *pkt)
 	}
 }
 
-static void canbus_tx_work_handler(struct k_work *item)
-{
-	struct net_pkt *pkt = CONTAINER_OF(item, struct net_pkt, work);
-
-	canbus_tx_work(pkt);
-}
-
 static enum net_verdict canbus_process_fc_data(struct canbus_isotp_tx_ctx *ctx,
 					       struct net_pkt *pkt)
 {
@@ -854,6 +860,8 @@ static enum net_verdict canbus_process_fc(struct net_pkt *pkt)
 	struct canbus_isotp_tx_ctx *tx_ctx;
 	uint16_t src_addr = canbus_get_src_lladdr(pkt);
 	enum net_verdict ret;
+	struct net_if *iface = net_pkt_iface(pkt);
+	struct canbus_net_ctx *net_ctx = net_if_l2_data(iface);
 
 	tx_ctx = canbus_get_tx_ctx(NET_CAN_TX_STATE_WAIT_FC, src_addr);
 	if (!tx_ctx) {
@@ -864,7 +872,7 @@ static enum net_verdict canbus_process_fc(struct net_pkt *pkt)
 
 	ret = canbus_process_fc_data(tx_ctx, pkt);
 	if (ret == NET_OK) {
-		k_work_submit_to_queue(&net_canbus_workq, &tx_ctx->pkt->work);
+		submit_to_queue(&net_ctx->tx_queue, tx_ctx->pkt);
 	}
 
 	return ret;
@@ -873,8 +881,8 @@ static enum net_verdict canbus_process_fc(struct net_pkt *pkt)
 static inline int canbus_send_ff(struct net_pkt *pkt, size_t len, bool mcast,
 				 struct net_canbus_lladdr *dest_addr)
 {
-	struct device *net_can_dev = net_if_get_device(pkt->iface);
-	const struct net_can_api *api = net_can_dev->driver_api;
+	const struct device *net_can_dev = net_if_get_device(pkt->iface);
+	const struct net_can_api *api = net_can_dev->api;
 	struct net_linkaddr *lladdr_inline;
 	struct zcan_frame frame;
 	int ret, index = 0;
@@ -885,11 +893,11 @@ static inline int canbus_send_ff(struct net_pkt *pkt, size_t len, bool mcast,
 	if (mcast) {
 		NET_DBG("Sending FF (multicast). ID: 0x%08x. PKT len: %zu"
 			" CTX: %p",
-			frame.ext_id, len, pkt->canbus_tx_ctx);
+			frame.id, len, pkt->canbus_tx_ctx);
 	} else {
 		NET_DBG("Sending FF (unicast). ID: 0x%08x. PKT len: %zu"
 			" CTX: %p",
-			frame.ext_id, len, pkt->canbus_tx_ctx);
+			frame.id, len, pkt->canbus_tx_ctx);
 	}
 
 #if defined(CONFIG_NET_L2_CANBUS_ETH_TRANSLATOR)
@@ -943,8 +951,8 @@ static inline int canbus_send_single_frame(struct net_pkt *pkt, size_t len,
 					   bool mcast,
 					   struct net_canbus_lladdr *dest_addr)
 {
-	struct device *net_can_dev = net_if_get_device(pkt->iface);
-	const struct net_can_api *api = net_can_dev->driver_api;
+	const struct device *net_can_dev = net_if_get_device(pkt->iface);
+	const struct net_can_api *api = net_can_dev->api;
 	int index = 0;
 	struct zcan_frame frame;
 	struct net_linkaddr *lladdr_dest;
@@ -981,8 +989,10 @@ static void canbus_start_sending_cf(struct _timeout *t)
 {
 	struct canbus_isotp_tx_ctx *ctx =
 		CONTAINER_OF(t, struct canbus_isotp_tx_ctx, timeout);
+	struct net_if *iface = net_pkt_iface(ctx->pkt);
+	struct canbus_net_ctx *net_ctx = net_if_l2_data(iface);
 
-	k_work_submit_to_queue(&net_canbus_workq, &ctx->pkt->work);
+	submit_to_queue(&net_ctx->tx_queue, ctx->pkt);
 }
 
 static int canbus_send_multiple_frames(struct net_pkt *pkt, size_t len,
@@ -1006,8 +1016,6 @@ static int canbus_send_multiple_frames(struct net_pkt *pkt, size_t len,
 	tx_ctx->dest_addr = *dest_addr;
 	tx_ctx->rem_len = net_pkt_get_len(pkt);
 	tx_ctx->tx_backlog = 0;
-
-	k_work_init(&pkt->work, canbus_tx_work_handler);
 
 	ret = canbus_send_ff(pkt, len, mcast, dest_addr);
 	if (ret != CAN_TX_OK) {
@@ -1083,6 +1091,8 @@ static int canbus_send(struct net_if *iface, struct net_pkt *pkt)
 	NET_DBG("IPv6 hdr compressed by %d bytes", comp_len);
 	net_pkt_cursor_init(pkt);
 	pkt_len = net_pkt_get_len(pkt);
+
+	net_capture_pkt(iface, pkt);
 
 	NET_DBG("Send CAN frame to 0x%04x%s", dest_addr.addr,
 		mcast ? " (mcast)" : "");
@@ -1467,11 +1477,11 @@ static enum net_verdict canbus_recv(struct net_if *iface,
 
 	if (pkt->canbus_rx_ctx) {
 		if (lladdr->len == sizeof(struct net_canbus_lladdr)) {
-			NET_DBG("Push reassembled packet from 0x%04x trough "
+			NET_DBG("Push reassembled packet from 0x%04x through "
 				"stack again", canbus_get_src_lladdr(pkt));
 		} else {
 			NET_DBG("Push reassembled packet from "
-				"%02x:%02x:%02x:%02x:%02x:%02x trough stack again",
+				"%02x:%02x:%02x:%02x:%02x:%02x through stack again",
 				lladdr->addr[0], lladdr->addr[1], lladdr->addr[2],
 				lladdr->addr[3], lladdr->addr[4], lladdr->addr[5]);
 		}
@@ -1496,17 +1506,17 @@ static enum net_verdict canbus_recv(struct net_if *iface,
 	return ret;
 }
 
-static inline int canbus_send_dad_request(struct device *net_can_dev,
+static inline int canbus_send_dad_request(const struct device *net_can_dev,
 					  struct net_canbus_lladdr *ll_addr)
 {
-	const struct net_can_api *api = net_can_dev->driver_api;
+	const struct net_can_api *api = net_can_dev->api;
 	struct zcan_frame frame;
 	int ret;
 
 	canbus_set_frame_datalength(&frame, 0);
 	frame.rtr = CAN_REMOTEREQUEST;
 	frame.id_type = CAN_EXTENDED_IDENTIFIER;
-	frame.ext_id = canbus_addr_to_id(ll_addr->addr,
+	frame.id = canbus_addr_to_id(ll_addr->addr,
 					 sys_rand32_get() & CAN_NET_IF_ADDR_MASK);
 
 	ret = api->send(net_can_dev, &frame, NULL, NULL, K_FOREVER);
@@ -1542,15 +1552,15 @@ static inline void canbus_send_dad_response(struct k_work *item)
 						  dad_work);
 	struct net_if *iface = ctx->iface;
 	struct net_linkaddr *ll_addr = net_if_get_link_addr(iface);
-	struct device *net_can_dev = net_if_get_device(iface);
-	const struct net_can_api *api = net_can_dev->driver_api;
+	const struct device *net_can_dev = net_if_get_device(iface);
+	const struct net_can_api *api = net_can_dev->api;
 	struct zcan_frame frame;
 	int ret;
 
 	canbus_set_frame_datalength(&frame, 0);
 	frame.rtr = CAN_DATAFRAME;
 	frame.id_type = CAN_EXTENDED_IDENTIFIER;
-	frame.ext_id = canbus_addr_to_id(NET_CAN_DAD_ADDR,
+	frame.id = canbus_addr_to_id(NET_CAN_DAD_ADDR,
 					 ntohs(UNALIGNED_GET((uint16_t *) ll_addr->addr)));
 
 	ret = api->send(net_can_dev, &frame, canbus_send_dad_resp_cb, item,
@@ -1562,10 +1572,10 @@ static inline void canbus_send_dad_response(struct k_work *item)
 	}
 }
 
-static inline void canbus_detach_filter(struct device *net_can_dev,
+static inline void canbus_detach_filter(const struct device *net_can_dev,
 					int filter_id)
 {
-	const struct net_can_api *api = net_can_dev->driver_api;
+	const struct net_can_api *api = net_can_dev->api;
 
 	api->detach_filter(net_can_dev, filter_id);
 }
@@ -1578,20 +1588,20 @@ static void canbus_dad_resp_cb(struct zcan_frame *frame, void *arg)
 }
 
 static inline
-int canbus_attach_dad_resp_filter(struct device *net_can_dev,
+int canbus_attach_dad_resp_filter(const struct device *net_can_dev,
 				  struct net_canbus_lladdr *ll_addr,
 				  struct k_sem *dad_sem)
 {
-	const struct net_can_api *api = net_can_dev->driver_api;
+	const struct net_can_api *api = net_can_dev->api;
 	struct zcan_filter filter = {
 		.id_type = CAN_EXTENDED_IDENTIFIER,
 		.rtr = CAN_DATAFRAME,
 		.rtr_mask = 1,
-		.ext_id_mask = CAN_EXT_ID_MASK
+		.id_mask = CAN_EXT_ID_MASK
 	};
 	int filter_id;
 
-	filter.ext_id = canbus_addr_to_id(NET_CAN_DAD_ADDR, ll_addr->addr);
+	filter.id = canbus_addr_to_id(NET_CAN_DAD_ADDR, ll_addr->addr);
 
 	filter_id = api->attach_filter(net_can_dev, canbus_dad_resp_cb,
 				       dad_sem, &filter);
@@ -1609,20 +1619,20 @@ static void canbus_dad_request_cb(struct zcan_frame *frame, void *arg)
 	k_work_submit_to_queue(&net_canbus_workq, work);
 }
 
-static inline int canbus_attach_dad_filter(struct device *net_can_dev,
+static inline int canbus_attach_dad_filter(const struct device *net_can_dev,
 					   struct net_canbus_lladdr *ll_addr,
 					   struct k_work *dad_work)
 {
-	const struct net_can_api *api = net_can_dev->driver_api;
+	const struct net_can_api *api = net_can_dev->api;
 	struct zcan_filter filter = {
 		.id_type = CAN_EXTENDED_IDENTIFIER,
 		.rtr = CAN_REMOTEREQUEST,
 		.rtr_mask = 1,
-		.ext_id_mask = (CAN_NET_IF_ADDR_MASK << CAN_NET_IF_ADDR_DEST_POS)
+		.id_mask = (CAN_NET_IF_ADDR_MASK << CAN_NET_IF_ADDR_DEST_POS)
 	};
 	int filter_id;
 
-	filter.ext_id = canbus_addr_to_id(ll_addr->addr, 0);
+	filter.id = canbus_addr_to_id(ll_addr->addr, 0);
 
 	filter_id = api->attach_filter(net_can_dev, canbus_dad_request_cb,
 				       dad_work, &filter);
@@ -1636,7 +1646,7 @@ static inline int canbus_attach_dad_filter(struct device *net_can_dev,
 static inline int canbus_init_ll_addr(struct net_if *iface)
 {
 	struct canbus_net_ctx *ctx = net_if_l2_data(iface);
-	struct device *net_can_dev = net_if_get_device(iface);
+	const struct device *net_can_dev = net_if_get_device(iface);
 	int dad_resp_filter_id = CAN_NET_FILTER_NOT_SET;
 	struct net_canbus_lladdr ll_addr;
 	int ret;
@@ -1705,10 +1715,51 @@ dad_err:
 	return ret;
 }
 
+static void queue_handler(struct canbus_net_ctx *ctx)
+{
+	struct k_poll_event events[] = {
+		K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_FIFO_DATA_AVAILABLE,
+					 K_POLL_MODE_NOTIFY_ONLY,
+					 &ctx->tx_queue),
+		K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_FIFO_DATA_AVAILABLE,
+					 K_POLL_MODE_NOTIFY_ONLY,
+					 &ctx->rx_err_queue),
+	};
+
+	struct net_pkt *pkt;
+	int ret;
+
+	while (1) {
+		ret = k_poll(events, ARRAY_SIZE(events), K_FOREVER);
+		if (ret) {
+			continue;
+		}
+
+		if (events[0].state == K_POLL_STATE_FIFO_DATA_AVAILABLE) {
+			pkt = k_fifo_get(&ctx->tx_queue, K_NO_WAIT);
+			if (pkt != NULL) {
+				canbus_tx_work(pkt);
+			}
+
+			events[0].state = K_POLL_STATE_NOT_READY;
+		}
+
+		if (events[1].state == K_POLL_STATE_FIFO_DATA_AVAILABLE) {
+			pkt = k_fifo_get(&ctx->rx_err_queue, K_NO_WAIT);
+			if (pkt != NULL) {
+				rx_err_work_handler(pkt);
+			}
+
+			events[1].state = K_POLL_STATE_NOT_READY;
+		}
+	}
+}
+
 void net_6locan_init(struct net_if *iface)
 {
 	struct canbus_net_ctx *ctx = net_if_l2_data(iface);
-	uint8_t thread_priority;
+	int thread_priority;
+	k_tid_t tid;
 	int i;
 
 	NET_DBG("Init CAN net interface");
@@ -1727,24 +1778,52 @@ void net_6locan_init(struct net_if *iface)
 
 	k_mutex_init(&l2_ctx.tx_ctx_mtx);
 	k_mutex_init(&l2_ctx.rx_ctx_mtx);
-	k_sem_init(&l2_ctx.tx_sem, 1, INT_MAX);
+	k_sem_init(&l2_ctx.tx_sem, 1, K_SEM_MAX_LIMIT);
 
 	/* This work queue should have precedence over the tx stream
 	 * TODO thread_priority = tx_tc2thread(NET_TC_TX_COUNT -1) - 1;
 	 */
-	thread_priority = 6;
+	if (IS_ENABLED(CONFIG_NET_TC_THREAD_COOPERATIVE)) {
+		thread_priority = K_PRIO_COOP(CONFIG_NUM_COOP_PRIORITIES - 1);
+	} else {
+		thread_priority = K_PRIO_PREEMPT(6);
+	}
 
-	k_work_q_start(&net_canbus_workq, net_canbus_stack,
-		       K_THREAD_STACK_SIZEOF(net_canbus_stack),
-		       K_PRIO_COOP(thread_priority));
+	k_work_queue_start(&net_canbus_workq, net_canbus_stack,
+			   K_KERNEL_STACK_SIZEOF(net_canbus_stack),
+			   thread_priority, NULL);
 	k_thread_name_set(&net_canbus_workq.thread, "isotp_work");
 	NET_DBG("Workq started. Thread ID: %p", &net_canbus_workq.thread);
+
+	k_fifo_init(&ctx->tx_queue);
+	k_fifo_init(&ctx->rx_err_queue);
+
+	tid = k_thread_create(&ctx->queue_handler, ctx->queue_stack,
+			      K_KERNEL_STACK_SIZEOF(ctx->queue_stack),
+			      (k_thread_entry_t)queue_handler,
+			      ctx, NULL, NULL,
+			      thread_priority, 0, K_FOREVER);
+	if (!tid) {
+		NET_ERR("Cannot create queue handler thread for %d",
+			net_if_get_by_iface(iface));
+	} else {
+		if (IS_ENABLED(CONFIG_THREAD_NAME)) {
+#define MAX_NAME_LEN sizeof("isotp[01]")
+			char name[MAX_NAME_LEN];
+
+			snprintk(name, sizeof(name), "isotp[%d]",
+				net_if_get_by_iface(iface));
+			k_thread_name_set(tid, name);
+		}
+
+		k_thread_start(tid);
+	}
 }
 
 static int canbus_enable(struct net_if *iface, bool state)
 {
-	struct device *net_can_dev = net_if_get_device(iface);
-	const struct net_can_api *api = net_can_dev->driver_api;
+	const struct device *net_can_dev = net_if_get_device(iface);
+	const struct net_can_api *api = net_can_dev->api;
 	struct canbus_net_ctx *ctx = net_if_l2_data(iface);
 	int dad_retry_cnt, ret;
 

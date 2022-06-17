@@ -19,7 +19,7 @@ necessarily damaging to the device. Errors indicate conditions that are
 outside of the node's design limits, and may have caused invalid behavior or
 permanent damage to the device.
 
-Fault values ``0x01`` to ``0x7f`` are reserved for the Bluetooth Mesh
+Fault values ``0x01`` to ``0x7f`` are reserved for the Bluetooth mesh
 specification, and the full list of specification defined faults are available
 in :ref:`bluetooth_mesh_health_faults`. Fault values ``0x80`` to ``0xff`` are
 vendor specific. The list of faults are always reported with a company ID to
@@ -38,27 +38,23 @@ device they're provisioning, as well as through the Health models at runtime.
 The attention state is always assigned a timeout in the range of one to 255
 seconds when enabled. The Health Server API provides two callbacks for the
 application to run their attention calling behavior:
-:cpp:var:`bt_mesh_health_srv_cb::attn_on` is called at the beginning of the
-attention period, :cpp:var:`bt_mesh_health_srv_cb::attn_off` is called at
+:c:member:`bt_mesh_health_srv_cb.attn_on` is called at the beginning of the
+attention period, :c:member:`bt_mesh_health_srv_cb.attn_off` is called at
 the end.
 
 The remaining time for the attention period may be queried through
-:cpp:var:`bt_mesh_health_srv::attn_timer`.
+:c:member:`bt_mesh_health_srv.attn_timer`.
 
 API reference
 *************
 
 .. doxygengroup:: bt_mesh_health_srv
-   :project: Zephyr
-   :members:
 
 .. _bluetooth_mesh_health_faults:
 
-Bluetooth Mesh Health Faults
-============================
+Health faults
+=============
 
-Fault values defined by the Bluetooth Mesh specification.
+Fault values defined by the Bluetooth mesh specification.
 
 .. doxygengroup:: bt_mesh_health_faults
-   :project: Zephyr
-   :members:

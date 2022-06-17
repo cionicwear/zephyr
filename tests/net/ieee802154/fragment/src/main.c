@@ -159,7 +159,7 @@ struct net_fragment_data {
 } __packed;
 
 
-int net_fragment_dev_init(struct device *dev)
+int net_fragment_dev_init(const struct device *dev)
 {
 	return 0;
 }
@@ -171,7 +171,7 @@ static void net_fragment_iface_init(struct net_if *iface)
 	net_if_set_link_addr(iface, mac, 8, NET_LINK_IEEE802154);
 }
 
-static int tester_send(struct device *dev, struct net_pkt *pkt)
+static int tester_send(const struct device *dev, struct net_pkt *pkt)
 {
 	return 0;
 }
@@ -182,7 +182,7 @@ static struct dummy_api net_fragment_if_api = {
 };
 
 NET_DEVICE_INIT(net_fragment_test, "net_fragment_test",
-		net_fragment_dev_init, device_pm_control_nop, NULL, NULL,
+		net_fragment_dev_init, NULL, NULL, NULL,
 		CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
 		&net_fragment_if_api, DUMMY_L2,
 		NET_L2_GET_CTX_TYPE(DUMMY_L2), 127);
@@ -237,7 +237,8 @@ static struct net_pkt *create_pkt(struct net_fragment_data *data)
 	uint16_t len;
 	int remaining;
 
-	pkt = net_pkt_alloc_on_iface(net_if_get_default(), K_FOREVER);
+	pkt = net_pkt_alloc_on_iface(
+		net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY)), K_FOREVER);
 	if (!pkt) {
 		return NULL;
 	}
@@ -294,7 +295,8 @@ static struct net_pkt *create_pkt(struct net_fragment_data *data)
 	net_pkt_lladdr_dst(pkt)->type = NET_LINK_IEEE802154;
 
 	memcpy(net_pkt_lladdr_src(pkt),
-	       net_if_get_link_addr(net_if_get_default()),
+	       net_if_get_link_addr(
+		       net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY))),
 	       sizeof(struct net_linkaddr));
 
 	return pkt;

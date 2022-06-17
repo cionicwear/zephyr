@@ -14,16 +14,6 @@
 #include <drivers/pwm.h>
 
 /*
- * Devicetree helper macro which gets the 'flags' cell from a 'pwms'
- * property, or returns 0 if the property has no 'flags' cell.
- */
-
-#define FLAGS_OR_ZERO(node)						\
-	COND_CODE_1(DT_PHA_HAS_CELL(node, pwms, flags),			\
-		    (DT_PWMS_FLAGS(node)),				\
-		    (0))
-
-/*
  * Extract devicetree configuration.
  */
 
@@ -32,34 +22,34 @@
 #define BLUE_NODE DT_ALIAS(blue_pwm_led)
 
 #if DT_NODE_HAS_STATUS(RED_NODE, okay)
-#define RED_LABEL	DT_PWMS_LABEL(RED_NODE)
+#define RED_CTLR_NODE	DT_PWMS_CTLR(RED_NODE)
 #define RED_CHANNEL	DT_PWMS_CHANNEL(RED_NODE)
-#define RED_FLAGS	FLAGS_OR_ZERO(RED_NODE)
+#define RED_FLAGS	DT_PWMS_FLAGS(RED_NODE)
 #else
 #error "Unsupported board: red-pwm-led devicetree alias is not defined"
-#define RED_LABEL	""
+#define RED_CTLR_NODE	DT_INVALID_NODE
 #define RED_CHANNEL	0
 #define RED_FLAGS	0
 #endif
 
 #if DT_NODE_HAS_STATUS(GREEN_NODE, okay)
-#define GREEN_LABEL	DT_PWMS_LABEL(GREEN_NODE)
+#define GREEN_CTLR_NODE	DT_PWMS_CTLR(GREEN_NODE)
 #define GREEN_CHANNEL	DT_PWMS_CHANNEL(GREEN_NODE)
-#define GREEN_FLAGS	FLAGS_OR_ZERO(GREEN_NODE)
+#define GREEN_FLAGS	DT_PWMS_FLAGS(GREEN_NODE)
 #else
 #error "Unsupported board: green-pwm-led devicetree alias is not defined"
-#define GREEN_LABEL	""
+#define GREEN_CTLR_NODE	DT_INVALID_NODE
 #define GREEN_CHANNEL	0
 #define GREEN_FLAGS	0
 #endif
 
 #if DT_NODE_HAS_STATUS(BLUE_NODE, okay)
-#define BLUE_LABEL	DT_PWMS_LABEL(BLUE_NODE)
+#define BLUE_CTLR_NODE	DT_PWMS_CTLR(BLUE_NODE)
 #define BLUE_CHANNEL	DT_PWMS_CHANNEL(BLUE_NODE)
-#define BLUE_FLAGS	FLAGS_OR_ZERO(BLUE_NODE)
+#define BLUE_FLAGS	DT_PWMS_FLAGS(BLUE_NODE)
 #else
 #error "Unsupported board: blue-pwm-led devicetree alias is not defined"
-#define BLUE_LABEL	""
+#define BLUE_CTLR_NODE	DT_INVALID_NODE
 #define BLUE_CHANNEL	0
 #define BLUE_FLAGS	0
 #endif
@@ -71,7 +61,7 @@
 #define PERIOD_USEC	(USEC_PER_SEC / 50U)
 #define STEPSIZE_USEC	2000
 
-static int pwm_set(struct device *pwm_dev, uint32_t pwm_pin,
+static int pwm_set(const struct device *pwm_dev, uint32_t pwm_pin,
 		     uint32_t pulse_width, pwm_flags_t flags)
 {
 	return pwm_pin_set_usec(pwm_dev, pwm_pin, PERIOD_USEC,
@@ -82,17 +72,28 @@ enum { RED, GREEN, BLUE };
 
 void main(void)
 {
-	struct device *pwm_dev[3];
+	const struct device *pwm_dev[3];
 	uint32_t pulse_red, pulse_green, pulse_blue; /* pulse widths */
 	int ret;
 
 	printk("PWM-based RGB LED control\n");
 
-	pwm_dev[RED] = device_get_binding(RED_LABEL);
-	pwm_dev[GREEN] = device_get_binding(GREEN_LABEL);
-	pwm_dev[BLUE] = device_get_binding(BLUE_LABEL);
-	if (!pwm_dev[RED] || !pwm_dev[GREEN] || !pwm_dev[BLUE]) {
-		printk("Error: cannot find one or more PWM devices\n");
+	pwm_dev[RED] = DEVICE_DT_GET(RED_CTLR_NODE);
+	pwm_dev[GREEN] = DEVICE_DT_GET(GREEN_CTLR_NODE);
+	pwm_dev[BLUE] = DEVICE_DT_GET(BLUE_CTLR_NODE);
+
+	if (!device_is_ready(pwm_dev[RED])) {
+		printk("Error: red PWM device %s is not ready\n", pwm_dev[RED]->name);
+		return;
+	}
+
+	if (!device_is_ready(pwm_dev[GREEN])) {
+		printk("Error: green PWM device %s is not ready\n", pwm_dev[GREEN]->name);
+		return;
+	}
+
+	if (!device_is_ready(pwm_dev[BLUE])) {
+		printk("Error: blue PWM device %s is not ready\n", pwm_dev[BLUE]->name);
 		return;
 	}
 

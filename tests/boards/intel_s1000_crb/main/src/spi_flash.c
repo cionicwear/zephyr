@@ -51,7 +51,7 @@ int flash_region_is_empty(uint32_t off, void *dst, uint32_t len)
 
 void test_flash(void)
 {
-	struct device *flash_dev;
+	const struct device *flash_dev;
 	uint8_t buf[TEST_DATA_LEN];
 	uint32_t magic[4];
 	int i;
@@ -64,8 +64,6 @@ void test_flash(void)
 	}
 
 	LOG_INF("SPI flash driver was found!\n");
-
-	flash_write_protection_set(flash_dev, false);
 
 	if (flash_erase(flash_dev,
 			FLASH_TEST_REGION_OFFSET,

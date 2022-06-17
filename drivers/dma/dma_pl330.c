@@ -19,14 +19,14 @@ LOG_MODULE_REGISTER(dma_pl330);
 
 #define DEV_NAME(dev) ((dev)->name)
 #define DEV_CFG(dev) \
-	((const struct dma_pl330_config *const)(dev)->config_info)
+	((const struct dma_pl330_config *const)(dev)->config)
 
 #define DEV_DATA(dev) \
-	((struct dma_pl330_dev_data *const)(dev)->driver_data)
+	((struct dma_pl330_dev_data *const)(dev)->data)
 
 #define BYTE_WIDTH(burst_size) (1 << (burst_size))
 
-static int dma_pl330_submit(struct device *dev, uint64_t dst,
+static int dma_pl330_submit(const struct device *dev, uint64_t dst,
 			    uint64_t src, uint32_t channel, uint32_t size);
 
 static void dma_pl330_get_counter(struct dma_pl330_ch_internal *ch_handle,
@@ -128,7 +128,6 @@ static void dma_pl330_config_channel(struct dma_pl330_ch_config *ch_cfg,
 {
 	struct dma_pl330_ch_internal *ch_handle = &ch_cfg->internal;
 
-	memset(ch_handle, 0, sizeof(*ch_handle));
 	ch_handle->src_addr = src;
 	ch_handle->dst_addr = dst;
 	ch_handle->trans_size = size;
@@ -142,16 +141,16 @@ static void dma_pl330_config_channel(struct dma_pl330_ch_config *ch_cfg,
 	}
 }
 
-static inline uint32_t dma_pl330_gen_mov(uint8_t *buf,
+static inline uint32_t dma_pl330_gen_mov(mem_addr_t buf,
 					 enum dmamov_type type,
 					 uint32_t val)
 {
-	sys_write8(OP_DMA_MOV, (uint32_t)buf + 0);
-	sys_write8(type, (uint32_t)buf + 1);
-	sys_write8(val, (uint32_t)buf + 2);
-	sys_write8(val >> 8, (uint32_t)buf + 3);
-	sys_write8(val >> 16, (uint32_t)buf + 4);
-	sys_write8(val >> 24, (uint32_t)buf + 5);
+	sys_write8(OP_DMA_MOV, buf);
+	sys_write8(type, buf + 1);
+	sys_write8(val, buf + 2);
+	sys_write8(val >> 8, buf + 3);
+	sys_write8(val >> 16, buf + 4);
+	sys_write8(val >> 24, buf + 5);
 
 	return SZ_CMD_DMAMOV;
 }
@@ -162,34 +161,33 @@ static inline void dma_pl330_gen_op(uint8_t opcode, uint32_t addr, uint32_t val)
 	sys_write8(val, addr + 1);
 }
 
-static int dma_pl330_setup_ch(struct device *dev,
+static int dma_pl330_setup_ch(const struct device *dev,
 			      struct dma_pl330_ch_internal *ch_dat,
 			      int ch)
 {
-	uint32_t dma_exe_addr, offset = 0, ccr;
+	mem_addr_t dma_exec_addr;
+	uint32_t offset = 0, ccr;
 	uint32_t lp0_start, lp1_start;
 	uint32_t loop_counter0 = 0, loop_counter1 = 0;
 	uint32_t srcbytewidth, dstbytewidth;
 	uint32_t loop_counter, residue;
 	struct dma_pl330_dev_data *const dev_data = DEV_DATA(dev);
 	struct dma_pl330_ch_config *channel_cfg;
-	uint8_t *dma_exec_addr8;
 	int secure = ch_dat->nonsec_mode ? SRC_PRI_NONSEC_VALUE :
 				SRC_PRI_SEC_VALUE;
 
 	channel_cfg = &dev_data->channels[ch];
-	dma_exe_addr = channel_cfg->dma_exe_addr;
-	dma_exec_addr8 = (uint8_t *)dma_exe_addr;
+	dma_exec_addr = channel_cfg->dma_exec_addr;
 
-	offset  += dma_pl330_gen_mov(dma_exec_addr8,
+	offset  += dma_pl330_gen_mov(dma_exec_addr,
 				     SAR, ch_dat->src_addr);
 
-	offset  += dma_pl330_gen_mov(dma_exec_addr8 + offset,
+	offset  += dma_pl330_gen_mov(dma_exec_addr + offset,
 				     DAR, ch_dat->dst_addr);
 
 	ccr = dma_pl330_ch_ccr(ch_dat);
 
-	offset  += dma_pl330_gen_mov(dma_exec_addr8 + offset,
+	offset  += dma_pl330_gen_mov(dma_exec_addr + offset,
 				     CCR, ccr);
 
 	dma_pl330_get_counter(ch_dat, &srcbytewidth, &dstbytewidth,
@@ -198,40 +196,40 @@ static int dma_pl330_setup_ch(struct device *dev,
 	if (loop_counter >= PL330_LOOP_COUNTER0_MAX) {
 		loop_counter0 = PL330_LOOP_COUNTER0_MAX - 1;
 		loop_counter1 = loop_counter / PL330_LOOP_COUNTER0_MAX - 1;
-		dma_pl330_gen_op(OP_DMA_LOOP_COUNT1, dma_exe_addr + offset,
-				 (loop_counter1 & 0xff));
+		dma_pl330_gen_op(OP_DMA_LOOP_COUNT1, dma_exec_addr + offset,
+				 loop_counter1 & 0xff);
 		offset = offset + 2;
-		dma_pl330_gen_op(OP_DMA_LOOP, dma_exe_addr + offset,
-				 (loop_counter0 & 0xff));
+		dma_pl330_gen_op(OP_DMA_LOOP, dma_exec_addr + offset,
+				 loop_counter0 & 0xff);
 		offset = offset + 2;
 		lp1_start = offset;
 		lp0_start = offset;
-		sys_write8(OP_DMA_LD, (dma_exe_addr + offset));
-		sys_write8(OP_DMA_ST, (dma_exe_addr + offset + 1));
+		sys_write8(OP_DMA_LD, dma_exec_addr + offset);
+		sys_write8(OP_DMA_ST, dma_exec_addr + offset + 1);
 		offset = offset + 2;
-		dma_pl330_gen_op(OP_DMA_LP_BK_JMP1, (dma_exe_addr + offset),
+		dma_pl330_gen_op(OP_DMA_LP_BK_JMP1, dma_exec_addr + offset,
 				 ((offset - lp0_start) & 0xff));
 		offset = offset + 2;
-		dma_pl330_gen_op(OP_DMA_LOOP, (dma_exe_addr + offset),
+		dma_pl330_gen_op(OP_DMA_LOOP, dma_exec_addr + offset,
 				 (loop_counter0 & 0xff));
 		offset = offset + 2;
 		loop_counter1--;
-		dma_pl330_gen_op(OP_DMA_LP_BK_JMP2, (dma_exe_addr + offset),
+		dma_pl330_gen_op(OP_DMA_LP_BK_JMP2, dma_exec_addr + offset,
 				 ((offset - lp1_start) & 0xff));
 		offset = offset + 2;
 	}
 
 	if ((loop_counter % PL330_LOOP_COUNTER0_MAX) != 0) {
 		loop_counter0 = (loop_counter % PL330_LOOP_COUNTER0_MAX) - 1;
-		dma_pl330_gen_op(OP_DMA_LOOP, (dma_exe_addr + offset),
+		dma_pl330_gen_op(OP_DMA_LOOP, dma_exec_addr + offset,
 				 (loop_counter0 & 0xff));
 		offset = offset + 2;
 		loop_counter1--;
 		lp0_start = offset;
-		sys_write8(OP_DMA_LD, (dma_exe_addr + offset));
-		sys_write8(OP_DMA_ST, (dma_exe_addr + offset + 1));
+		sys_write8(OP_DMA_LD, dma_exec_addr + offset);
+		sys_write8(OP_DMA_ST, dma_exec_addr + offset + 1);
 		offset = offset + 2;
-		dma_pl330_gen_op(OP_DMA_LP_BK_JMP1, (dma_exe_addr + offset),
+		dma_pl330_gen_op(OP_DMA_LP_BK_JMP1, dma_exec_addr + offset,
 				 ((offset - lp0_start) & 0xff));
 		offset = offset + 2;
 	}
@@ -245,29 +243,29 @@ static int dma_pl330_setup_ch(struct device *dev,
 		       (0x0 << CC_SRCBRSTLEN_SHIFT) +
 		       (0x0 << CC_SRCBRSTSIZE_SHIFT) +
 		       ch_dat->src_inc;
-		offset += dma_pl330_gen_mov(dma_exec_addr8 + offset,
+		offset += dma_pl330_gen_mov(dma_exec_addr + offset,
 					    CCR, ccr);
-		dma_pl330_gen_op(OP_DMA_LOOP, (dma_exe_addr + offset),
+		dma_pl330_gen_op(OP_DMA_LOOP, dma_exec_addr + offset,
 				 ((residue - 1) & 0xff));
 		offset = offset + 2;
 		lp0_start = offset;
-		sys_write8(OP_DMA_LD, (dma_exe_addr + offset));
-		sys_write8(OP_DMA_ST, (dma_exe_addr + offset + 1));
+		sys_write8(OP_DMA_LD, dma_exec_addr + offset);
+		sys_write8(OP_DMA_ST, dma_exec_addr + offset + 1);
 		offset = offset + 2;
-		dma_pl330_gen_op(OP_DMA_LP_BK_JMP1, (dma_exe_addr + offset),
+		dma_pl330_gen_op(OP_DMA_LP_BK_JMP1, dma_exec_addr + offset,
 				 ((offset - lp0_start) & 0xff));
 		offset = offset + 2;
 	}
 
-	sys_write8(OP_DMA_END, (dma_exe_addr + offset));
-	sys_write8(OP_DMA_END, (dma_exe_addr + offset + 1));
-	sys_write8(OP_DMA_END, (dma_exe_addr + offset + 2));
-	sys_write8(OP_DMA_END, (dma_exe_addr + offset + 3));
+	sys_write8(OP_DMA_END, dma_exec_addr + offset);
+	sys_write8(OP_DMA_END, dma_exec_addr + offset + 1);
+	sys_write8(OP_DMA_END, dma_exec_addr + offset + 2);
+	sys_write8(OP_DMA_END, dma_exec_addr + offset + 3);
 
 	return 0;
 }
 
-static int dma_pl330_start_dma_ch(struct device *dev,
+static int dma_pl330_start_dma_ch(const struct device *dev,
 				  uint32_t reg_base, int ch, int secure)
 {
 	struct dma_pl330_dev_data *const dev_data = DEV_DATA(dev);
@@ -289,7 +287,7 @@ static int dma_pl330_start_dma_ch(struct device *dev,
 		    (secure << DMA_SECURE_SHIFT) + (ch << DMA_CH_SHIFT)),
 		    reg_base + DMAC_PL330_DBGINST0);
 
-	sys_write32(channel_cfg->dma_exe_addr,
+	sys_write32(channel_cfg->dma_exec_addr,
 		    reg_base + DMAC_PL330_DBGINST1);
 
 	sys_write32(0x0, reg_base + DMAC_PL330_DBGCMD);
@@ -321,7 +319,7 @@ static int dma_pl330_wait(uint32_t reg_base, int ch)
 	return 0;
 }
 
-static int dma_pl330_xfer(struct device *dev, uint64_t dst,
+static int dma_pl330_xfer(const struct device *dev, uint64_t dst,
 			  uint64_t src, uint32_t size, uint32_t channel,
 			  uint32_t *xfer_size)
 {
@@ -383,7 +381,7 @@ err:
 }
 
 #if CONFIG_DMA_64BIT
-static int dma_pl330_handle_boundary(struct device *dev, uint64_t dst,
+static int dma_pl330_handle_boundary(const struct device *dev, uint64_t dst,
 				     uint64_t src, uint32_t channel,
 				     uint32_t size)
 {
@@ -431,7 +429,8 @@ static int dma_pl330_handle_boundary(struct device *dev, uint64_t dst,
 }
 #endif
 
-static int dma_pl330_submit(struct device *dev, uint64_t dst, uint64_t src,
+static int dma_pl330_submit(const struct device *dev, uint64_t dst,
+			    uint64_t src,
 			    uint32_t channel, uint32_t size)
 {
 	int ret;
@@ -469,11 +468,12 @@ static int dma_pl330_submit(struct device *dev, uint64_t dst, uint64_t src,
 	return 0;
 }
 
-static int dma_pl330_configure(struct device *dev, uint32_t channel,
+static int dma_pl330_configure(const struct device *dev, uint32_t channel,
 			       struct dma_config *cfg)
 {
 	struct dma_pl330_dev_data *const dev_data = DEV_DATA(dev);
 	struct dma_pl330_ch_config *channel_cfg;
+	struct dma_pl330_ch_internal *ch_handle;
 
 	if (channel >= MAX_DMA_CHANNELS) {
 		return -EINVAL;
@@ -492,6 +492,9 @@ static int dma_pl330_configure(struct device *dev, uint32_t channel,
 		return -ENOTSUP;
 	}
 
+	ch_handle = &channel_cfg->internal;
+	memset(ch_handle, 0, sizeof(*ch_handle));
+
 	channel_cfg->direction = cfg->channel_direction;
 	channel_cfg->dst_addr_adj = cfg->head_block->dest_addr_adj;
 
@@ -500,7 +503,7 @@ static int dma_pl330_configure(struct device *dev, uint32_t channel,
 	channel_cfg->trans_size = cfg->head_block->block_size;
 
 	channel_cfg->dma_callback = cfg->dma_callback;
-	channel_cfg->callback_arg = cfg->callback_arg;
+	channel_cfg->user_data = cfg->user_data;
 
 	if (cfg->head_block->source_addr_adj == DMA_ADDR_ADJ_INCREMENT ||
 	    cfg->head_block->source_addr_adj == DMA_ADDR_ADJ_NO_CHANGE) {
@@ -519,7 +522,8 @@ static int dma_pl330_configure(struct device *dev, uint32_t channel,
 	return 0;
 }
 
-static int dma_pl330_transfer_start(struct device *dev, uint32_t channel)
+static int dma_pl330_transfer_start(const struct device *dev,
+				    uint32_t channel)
 {
 	struct dma_pl330_dev_data *const dev_data = DEV_DATA(dev);
 	struct dma_pl330_ch_config *channel_cfg;
@@ -534,20 +538,14 @@ static int dma_pl330_transfer_start(struct device *dev, uint32_t channel)
 			       channel_cfg->src_addr, channel,
 			       channel_cfg->trans_size);
 
-	/* Execute callback */
-	if (channel_cfg->dma_callback) {
-		channel_cfg->dma_callback(channel_cfg->callback_arg,
-					  channel, ret);
-	}
-
 	k_mutex_lock(&channel_cfg->ch_mutex, K_FOREVER);
 	channel_cfg->channel_active = 0;
 	k_mutex_unlock(&channel_cfg->ch_mutex);
 
-	return 0;
+	return ret;
 }
 
-static int dma_pl330_transfer_stop(struct device *dev, uint32_t channel)
+static int dma_pl330_transfer_stop(const struct device *dev, uint32_t channel)
 {
 	if (channel >= MAX_DMA_CHANNELS) {
 		return -EINVAL;
@@ -557,7 +555,7 @@ static int dma_pl330_transfer_stop(struct device *dev, uint32_t channel)
 	return 0;
 }
 
-static int dma_pl330_initialize(struct device *dev)
+static int dma_pl330_initialize(const struct device *dev)
 {
 	const struct dma_pl330_config *const dev_cfg = DEV_CFG(dev);
 	struct dma_pl330_dev_data *const dev_data = DEV_DATA(dev);
@@ -565,7 +563,7 @@ static int dma_pl330_initialize(struct device *dev)
 
 	for (int channel = 0; channel < MAX_DMA_CHANNELS; channel++) {
 		channel_cfg = &dev_data->channels[channel];
-		channel_cfg->dma_exe_addr = dev_cfg->mcode_base +
+		channel_cfg->dma_exec_addr = dev_cfg->mcode_base +
 					(channel * MICROCODE_SIZE_MAX);
 		k_mutex_init(&channel_cfg->ch_mutex);
 	}
@@ -580,8 +578,6 @@ static const struct dma_driver_api pl330_driver_api = {
 	.stop = dma_pl330_transfer_stop,
 };
 
-static struct device DEVICE_NAME_GET(dma_pl330);
-
 static const struct dma_pl330_config pl330_config = {
 	.reg_base = DT_INST_REG_ADDR(0),
 #ifdef CONFIG_DMA_64BIT
@@ -592,8 +588,7 @@ static const struct dma_pl330_config pl330_config = {
 
 static struct dma_pl330_dev_data pl330_data;
 
-DEVICE_AND_API_INIT(dma_pl330, CONFIG_DMA_0_NAME,
-		    &dma_pl330_initialize,
+DEVICE_DT_INST_DEFINE(0, &dma_pl330_initialize, NULL,
 		    &pl330_data, &pl330_config,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    &pl330_driver_api);

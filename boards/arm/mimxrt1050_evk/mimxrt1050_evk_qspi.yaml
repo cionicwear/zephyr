@@ -16,6 +16,7 @@ ram: 32768
 flash: 8192
 supported:
   - arduino_gpio
+  - arduino_serial
   - counter
   - display
   - gpio
@@ -24,3 +25,4 @@ supported:
   - sdhc
   - spi
   - usb_device
+  - watchdog

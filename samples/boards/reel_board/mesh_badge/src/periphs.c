@@ -13,7 +13,7 @@
 #include <bluetooth/mesh.h>
 
 struct device_info {
-	struct device *dev;
+	const struct device *dev;
 	char *name;
 };
 
@@ -84,7 +84,7 @@ int get_apds9960_val(struct sensor_value *val)
 
 #define MOTION_TIMEOUT K_MINUTES(30)
 
-static struct k_delayed_work motion_work;
+static struct k_work_delayable motion_work;
 
 static void motion_timeout(struct k_work *work)
 {
@@ -93,7 +93,7 @@ static void motion_timeout(struct k_work *work)
 	printk("power save\n");
 
 	if (!mesh_is_initialized()) {
-		k_delayed_work_submit(&motion_work, MOTION_TIMEOUT);
+		k_work_schedule(&motion_work, MOTION_TIMEOUT);
 		return;
 	}
 
@@ -103,7 +103,8 @@ static void motion_timeout(struct k_work *work)
 	}
 }
 
-static void motion_handler(struct device *dev, struct sensor_trigger *trig)
+static void motion_handler(const struct device *dev,
+			   struct sensor_trigger *trig)
 {
 	int err;
 
@@ -118,7 +119,7 @@ static void motion_handler(struct device *dev, struct sensor_trigger *trig)
 		printk("failed to resume mesh (err %d)\n", err);
 	}
 
-	k_delayed_work_submit(&motion_work, MOTION_TIMEOUT);
+	k_work_reschedule(&motion_work, MOTION_TIMEOUT);
 }
 
 static void configure_accel(void)
@@ -137,8 +138,8 @@ static void configure_accel(void)
 	}
 
 
-	k_delayed_work_init(&motion_work, motion_timeout);
-	k_delayed_work_submit(&motion_work, MOTION_TIMEOUT);
+	k_work_init_delayable(&motion_work, motion_timeout);
+	k_work_schedule(&motion_work, MOTION_TIMEOUT);
 }
 
 int periphs_init(void)

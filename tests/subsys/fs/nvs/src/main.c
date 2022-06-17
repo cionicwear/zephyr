@@ -607,7 +607,7 @@ void test_delete(void)
 void test_nvs_gc_corrupt_close_ate(void)
 {
 	struct nvs_ate ate, close_ate;
-	struct device *flash_dev;
+	const struct device *flash_dev;
 	uint32_t data;
 	ssize_t len;
 	int err;
@@ -625,8 +625,6 @@ void test_nvs_gc_corrupt_close_ate(void)
 	ate.len = sizeof(data);
 	ate.crc8 = crc8_ccitt(0xff, &ate,
 			      offsetof(struct nvs_ate, crc8));
-
-	flash_write_protection_set(flash_dev, false);
 
 	/* Mark sector 0 as closed */
 	err = flash_write(flash_dev, fs.offset + fs.sector_size -
@@ -650,8 +648,6 @@ void test_nvs_gc_corrupt_close_ate(void)
 			  sizeof(close_ate));
 	zassert_true(err == 0,  "flash_write failed: %d", err);
 
-	flash_write_protection_set(flash_dev, true);
-
 	fs.sector_count = 3;
 
 	err = nvs_init(&fs, DT_CHOSEN_ZEPHYR_FLASH_CONTROLLER_LABEL);
@@ -670,7 +666,7 @@ void test_nvs_gc_corrupt_close_ate(void)
 void test_nvs_gc_corrupt_ate(void)
 {
 	struct nvs_ate corrupt_ate, close_ate;
-	struct device *flash_dev;
+	const struct device *flash_dev;
 	int err;
 
 	flash_dev = device_get_binding(DT_CHOSEN_ZEPHYR_FLASH_CONTROLLER_LABEL);
@@ -686,8 +682,6 @@ void test_nvs_gc_corrupt_ate(void)
 	corrupt_ate.offset = 0;
 	corrupt_ate.len = 20;
 	corrupt_ate.crc8 = 0xff; /* Incorrect crc8 */
-
-	flash_write_protection_set(flash_dev, false);
 
 	/* Mark sector 0 as closed */
 	err = flash_write(flash_dev, fs.offset + fs.sector_size -
@@ -705,8 +699,6 @@ void test_nvs_gc_corrupt_ate(void)
 			  sizeof(struct nvs_ate), &close_ate,
 			  sizeof(close_ate));
 	zassert_true(err == 0,  "flash_write failed: %d", err);
-
-	flash_write_protection_set(flash_dev, true);
 
 	fs.sector_count = 3;
 

@@ -88,8 +88,8 @@ static struct eth_context eth_context2;
 
 static void eth_iface_init(struct net_if *iface)
 {
-	struct device *dev = net_if_get_device(iface);
-	struct eth_context *context = dev->driver_data;
+	const struct device *dev = net_if_get_device(iface);
+	struct eth_context *context = dev->data;
 
 	net_if_set_link_addr(iface, context->mac_addr,
 			     sizeof(context->mac_addr),
@@ -98,7 +98,7 @@ static void eth_iface_init(struct net_if *iface)
 	ethernet_init(iface);
 }
 
-static int eth_tx(struct device *dev, struct net_pkt *pkt)
+static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 {
 	if (!pkt->buffer) {
 		DBG("No data to send!\n");
@@ -121,7 +121,7 @@ static int eth_tx(struct device *dev, struct net_pkt *pkt)
 	return 0;
 }
 
-static enum ethernet_hw_caps eth_get_capabilities(struct device *dev)
+static enum ethernet_hw_caps eth_get_capabilities(const struct device *dev)
 {
 	return 0;
 }
@@ -144,20 +144,20 @@ static void generate_mac(uint8_t *mac_addr)
 	mac_addr[5] = sys_rand32_get();
 }
 
-static int eth_init(struct device *dev)
+static int eth_init(const struct device *dev)
 {
-	struct eth_context *context = dev->driver_data;
+	struct eth_context *context = dev->data;
 
 	generate_mac(context->mac_addr);
 
 	return 0;
 }
 
-ETH_NET_DEVICE_INIT(eth_test, "eth_test", eth_init, device_pm_control_nop,
+ETH_NET_DEVICE_INIT(eth_test, "eth_test", eth_init, NULL,
 		    &eth_context, NULL, CONFIG_ETH_INIT_PRIORITY, &api_funcs,
 		    NET_ETH_MTU);
 
-ETH_NET_DEVICE_INIT(eth_test2, "eth_test2", eth_init, device_pm_control_nop,
+ETH_NET_DEVICE_INIT(eth_test2, "eth_test2", eth_init, NULL,
 		    &eth_context2, NULL, CONFIG_ETH_INIT_PRIORITY, &api_funcs,
 		    NET_ETH_MTU);
 
@@ -435,7 +435,6 @@ static void send_some_data(struct net_if *iface)
 		.sin6_family = AF_INET6,
 		.sin6_port = 0,
 	};
-	bool timestamp = true;
 	int ret;
 
 	ret = net_context_get(AF_INET6, SOCK_DGRAM, IPPROTO_UDP,
@@ -451,9 +450,6 @@ static void send_some_data(struct net_if *iface)
 
 	ret = add_neighbor(iface, &dst_addr);
 	zassert_true(ret, "Cannot add neighbor\n");
-
-	net_context_set_option(udp_v6_ctx, NET_OPT_TIMESTAMP,
-			       &timestamp, sizeof(timestamp));
 
 	ret = net_context_sendto(udp_v6_ctx, test_data, strlen(test_data),
 				 (struct sockaddr *)&dst_addr6,

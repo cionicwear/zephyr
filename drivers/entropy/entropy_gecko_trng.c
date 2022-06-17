@@ -30,8 +30,9 @@ static void entropy_gecko_trng_read(uint8_t *output, size_t len)
 	}
 }
 
-static int entropy_gecko_trng_get_entropy(struct device *dev, uint8_t *buffer,
-					 uint16_t length)
+static int entropy_gecko_trng_get_entropy(const struct device *dev,
+					  uint8_t *buffer,
+					  uint16_t length)
 {
 	size_t count = 0;
 	size_t available;
@@ -53,8 +54,9 @@ static int entropy_gecko_trng_get_entropy(struct device *dev, uint8_t *buffer,
 	return 0;
 }
 
-static int entropy_gecko_trng_get_entropy_isr(struct device *dev, uint8_t *buf,
-					uint16_t len, uint32_t flags)
+static int entropy_gecko_trng_get_entropy_isr(const struct device *dev,
+					      uint8_t *buf,
+					      uint16_t len, uint32_t flags)
 {
 
 	if ((flags & ENTROPY_BUSYWAIT) == 0U) {
@@ -82,7 +84,7 @@ static int entropy_gecko_trng_get_entropy_isr(struct device *dev, uint8_t *buf,
 	}
 }
 
-static int entropy_gecko_trng_init(struct device *device)
+static int entropy_gecko_trng_init(const struct device *dev)
 {
 	/* Enable the TRNG0 clock. */
 	CMU_ClockEnable(cmuClock_TRNG0, true);
@@ -97,7 +99,8 @@ static struct entropy_driver_api entropy_gecko_trng_api_funcs = {
 	.get_entropy_isr = entropy_gecko_trng_get_entropy_isr
 };
 
-DEVICE_AND_API_INIT(entropy_gecko_trng, DT_INST_LABEL(0),
-			entropy_gecko_trng_init, NULL, NULL,
+DEVICE_DT_INST_DEFINE(0,
+			entropy_gecko_trng_init, NULL,
+			NULL, NULL,
 			PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 			&entropy_gecko_trng_api_funcs);

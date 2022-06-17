@@ -36,11 +36,17 @@
 
 #define X86_FXSAVE_SIZE		512	/* size and alignment of buffer ... */
 #define X86_FXSAVE_ALIGN	16	/* ... for FXSAVE/FXRSTOR ops */
-#define X86_MXCSR_SANE		0x1dc0	/* enable division-by-zero exception */
+
+/* MXCSR Control and Status Register for SIMD floating-point operations.
+ * Set default value 1F80H according to the Intel(R) 64 and IA-32 Manual.
+ * Disable denormals-are-zeros mode.
+ */
+#define X86_MXCSR_SANE		0x1f80
 
 #ifndef _ASMLANGUAGE
 
 #include <zephyr/types.h>
+#include <arch/x86/mmustructs.h>
 
 /*
  * 64-bit Task State Segment. One defined per CPU.
@@ -114,11 +120,10 @@ struct _thread_arch {
 	uint8_t flags;
 
 #ifdef CONFIG_USERSPACE
-	/* Pointer to page tables used by this thread. Supervisor threads
-	 * always use the kernel's page table, user thread use per-thread
-	 * tables stored in the stack object
-	 */
-	struct x86_page_tables *ptables;
+#ifndef CONFIG_X86_COMMON_PAGE_TABLE
+	/* Physical address of the page tables used by this thread */
+	uintptr_t ptables;
+#endif /* CONFIG_X86_COMMON_PAGE_TABLE */
 
 	/* Initial privilege mode stack pointer when doing a system call.
 	 * Un-set for supervisor threads.

@@ -12,7 +12,13 @@
 #include <driverlib/rom_map.h>
 #include <driverlib/prcm.h>
 
-static int ti_cc32xx_init(struct device *arg)
+/* Overrides the weak ARM implementation */
+void sys_arch_reboot(int type)
+{
+	MAP_PRCMMCUReset(!!type);
+}
+
+static int ti_cc32xx_init(const struct device *arg)
 {
 	ARG_UNUSED(arg);
 

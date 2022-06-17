@@ -14,6 +14,12 @@ enum units { UNIT_ticks, UNIT_cyc, UNIT_ms, UNIT_us, UNIT_ns };
 
 enum round { ROUND_floor, ROUND_ceil, ROUND_near };
 
+static const char *const round_s[] = {
+	[ROUND_floor] = "floor",
+	[ROUND_ceil] = "ceil",
+	[ROUND_near] = "near",
+};
+
 struct test_rec {
 	enum units src;
 	enum units dst;
@@ -40,11 +46,17 @@ static struct test_rec tests[] = {
 	 TESTREC(ms, ticks, near, 64),
 	 TESTREC(ms, ticks, ceil, 32),
 	 TESTREC(ms, ticks, ceil, 64),
+	 TESTREC(us, cyc, floor, 32),
 	 TESTREC(us, cyc, floor, 64),
+	 TESTREC(us, cyc, near, 32),
 	 TESTREC(us, cyc, near, 64),
+	 TESTREC(us, cyc, ceil, 32),
 	 TESTREC(us, cyc, ceil, 64),
+	 TESTREC(us, ticks, floor, 32),
 	 TESTREC(us, ticks, floor, 64),
+	 TESTREC(us, ticks, near, 32),
 	 TESTREC(us, ticks, near, 64),
+	 TESTREC(us, ticks, ceil, 32),
 	 TESTREC(us, ticks, ceil, 64),
 	 TESTREC(cyc, ms, floor, 32),
 	 TESTREC(cyc, ms, floor, 64),
@@ -52,8 +64,11 @@ static struct test_rec tests[] = {
 	 TESTREC(cyc, ms, near, 64),
 	 TESTREC(cyc, ms, ceil, 32),
 	 TESTREC(cyc, ms, ceil, 64),
+	 TESTREC(cyc, us, floor, 32),
 	 TESTREC(cyc, us, floor, 64),
+	 TESTREC(cyc, us, near, 32),
 	 TESTREC(cyc, us, near, 64),
+	 TESTREC(cyc, us, ceil, 32),
 	 TESTREC(cyc, us, ceil, 64),
 	 TESTREC(cyc, ticks, floor, 32),
 	 TESTREC(cyc, ticks, floor, 64),
@@ -67,8 +82,11 @@ static struct test_rec tests[] = {
 	 TESTREC(ticks, ms, near, 64),
 	 TESTREC(ticks, ms, ceil, 32),
 	 TESTREC(ticks, ms, ceil, 64),
+	 TESTREC(ticks, us, floor, 32),
 	 TESTREC(ticks, us, floor, 64),
+	 TESTREC(ticks, us, near, 32),
 	 TESTREC(ticks, us, near, 64),
+	 TESTREC(ticks, us, ceil, 32),
 	 TESTREC(ticks, us, ceil, 64),
 	 TESTREC(ticks, cyc, floor, 32),
 	 TESTREC(ticks, cyc, floor, 64),
@@ -76,17 +94,29 @@ static struct test_rec tests[] = {
 	 TESTREC(ticks, cyc, near, 64),
 	 TESTREC(ticks, cyc, ceil, 32),
 	 TESTREC(ticks, cyc, ceil, 64),
+	 TESTREC(ns, cyc, floor, 32),
 	 TESTREC(ns, cyc, floor, 64),
+	 TESTREC(ns, cyc, near, 32),
 	 TESTREC(ns, cyc, near, 64),
+	 TESTREC(ns, cyc, ceil, 32),
 	 TESTREC(ns, cyc, ceil, 64),
+	 TESTREC(ns, ticks, floor, 32),
 	 TESTREC(ns, ticks, floor, 64),
+	 TESTREC(ns, ticks, near, 32),
 	 TESTREC(ns, ticks, near, 64),
+	 TESTREC(ns, ticks, ceil, 32),
 	 TESTREC(ns, ticks, ceil, 64),
+	 TESTREC(cyc, ns, floor, 32),
 	 TESTREC(cyc, ns, floor, 64),
+	 TESTREC(cyc, ns, near, 32),
 	 TESTREC(cyc, ns, near, 64),
+	 TESTREC(cyc, ns, ceil, 32),
 	 TESTREC(cyc, ns, ceil, 64),
+	 TESTREC(ticks, ns, floor, 32),
 	 TESTREC(ticks, ns, floor, 64),
+	 TESTREC(ticks, ns, near, 32),
 	 TESTREC(ticks, ns, near, 64),
+	 TESTREC(ticks, ns, ceil, 32),
 	 TESTREC(ticks, ns, ceil, 64),
 	};
 
@@ -156,9 +186,10 @@ void test_conversion(struct test_rec *t, uint64_t val)
 	}
 
 	zassert_true(diff <= maxdiff && diff >= mindiff,
-		     "Convert %lld from %lldhz to %lldhz (= %lld) failed. "
-		     "diff %lld should be in [%lld:%lld]",
-		     val, from_hz, to_hz, result, diff, mindiff, maxdiff);
+		     "Convert %llu (%llx) from %u Hz to %u Hz %u-bit %s\n"
+		     "result %llu (%llx) diff %lld (%llx) should be in [%lld:%lld]",
+		     val, val, from_hz, to_hz, t->precision, round_s[t->round],
+		     result, result, diff, diff, mindiff, maxdiff);
 }
 
 void test_time_conversions(void)

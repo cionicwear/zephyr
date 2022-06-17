@@ -20,18 +20,13 @@
 #include <linker/sections.h>
 #include <sys/atomic.h>
 #include <sys/__assert.h>
-#include <sched_priq.h>
+#include <kernel/sched_priq.h>
 #include <sys/dlist.h>
 #include <sys/slist.h>
 #include <sys/sflist.h>
 #include <sys/util.h>
-#include <sys/mempool_base.h>
 #include <kernel_structs.h>
-#ifdef CONFIG_MEM_POOL_HEAP_BACKEND
-#include <mempool_heap.h>
-#else
-#include <mempool_sys.h>
-#endif
+#include <kernel/mempool_heap.h>
 #include <kernel_version.h>
 #include <syscall.h>
 #include <sys/printk.h>
@@ -41,6 +36,9 @@
 #include <spinlock.h>
 #include <fatal.h>
 #include <irq.h>
-#include <sys/thread_stack.h>
+#include <kernel/thread_stack.h>
+#include <app_memory/mem_domain.h>
+#include <sys/kobject.h>
+#include <kernel/thread.h>
 
 #endif /* ZEPHYR_INCLUDE_KERNEL_INCLUDES_H_ */

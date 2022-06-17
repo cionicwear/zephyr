@@ -9,6 +9,8 @@
 
 #include "dns_pack.h"
 
+#include "dns_internal.h"
+
 static inline uint16_t dns_strlen(const char *str)
 {
 	if (str == NULL) {
@@ -104,7 +106,8 @@ static int skip_fqdn(uint8_t *answer, int buf_sz)
 	return i;
 }
 
-int dns_unpack_answer(struct dns_msg_t *dns_msg, int dname_ptr, uint32_t *ttl)
+int dns_unpack_answer(struct dns_msg_t *dns_msg, int dname_ptr, uint32_t *ttl,
+		      enum dns_rr_type *type)
 {
 	int dname_len;
 	uint16_t rem_size;
@@ -153,8 +156,9 @@ int dns_unpack_answer(struct dns_msg_t *dns_msg, int dname_ptr, uint32_t *ttl)
 		DNS_COMMON_UINT_SIZE + /* type length */
 		DNS_TTL_LEN +
 		DNS_RDLENGTH_LEN;
+	*type = dns_answer_type(dname_len, answer);
 
-	switch (dns_answer_type(dname_len, answer)) {
+	switch (*type) {
 	case DNS_RR_TYPE_A:
 	case DNS_RR_TYPE_AAAA:
 		set_dns_msg_response(dns_msg, DNS_RESPONSE_IP, pos, len);
@@ -334,7 +338,7 @@ int dns_unpack_response_query(struct dns_msg_t *dns_msg)
 
 	/* 4 bytes more due to qtype and qclass */
 	offset += DNS_QTYPE_LEN + DNS_QCLASS_LEN;
-	if (offset > dns_msg->msg_size) {
+	if (offset >= dns_msg->msg_size) {
 		return -ENOMEM;
 	}
 
@@ -361,14 +365,10 @@ int dns_copy_qname(uint8_t *buf, uint16_t *len, uint16_t size,
 	uint8_t *msg = dns_msg->msg;
 	uint16_t lb_size;
 	int rc = -EINVAL;
-	int i = 0;
 
 	*len = 0U;
 
-	/* Iterate ANCOUNT + 1 to allow the Query's QNAME to be parsed.
-	 * This is required to avoid 'alias loops'
-	 */
-	while (i++ < dns_header_ancount(dns_msg->msg) + 1) {
+	while (1) {
 		if (pos >= msg_size) {
 			rc = -ENOMEM;
 			break;
@@ -559,7 +559,10 @@ int dns_unpack_query(struct dns_msg_t *dns_msg, struct net_buf *buf,
 	}
 
 	query_type = dns_unpack_query_qtype(end_of_label);
-	if (query_type != DNS_RR_TYPE_A && query_type != DNS_RR_TYPE_AAAA) {
+	if (query_type != DNS_RR_TYPE_A && query_type != DNS_RR_TYPE_AAAA
+		&& query_type != DNS_RR_TYPE_PTR
+		&& query_type != DNS_RR_TYPE_SRV
+		&& query_type != DNS_RR_TYPE_TXT) {
 		return -EINVAL;
 	}
 

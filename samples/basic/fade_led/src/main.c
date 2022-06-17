@@ -16,23 +16,13 @@
 
 #define PWM_LED0_NODE	DT_ALIAS(pwm_led0)
 
-/*
- * Devicetree helper macro which gets the 'flags' cell from the node's
- * pwms property, or returns 0 if the property has no 'flags' cell.
- */
-
-#define FLAGS_OR_ZERO(node)						\
-	COND_CODE_1(DT_PHA_HAS_CELL(node, pwms, flags),		\
-		    (DT_PWMS_FLAGS(node)),				\
-		    (0))
-
 #if DT_NODE_HAS_STATUS(PWM_LED0_NODE, okay)
-#define PWM_LABEL	DT_PWMS_LABEL(PWM_LED0_NODE)
+#define PWM_CTLR	DT_PWMS_CTLR(PWM_LED0_NODE)
 #define PWM_CHANNEL	DT_PWMS_CHANNEL(PWM_LED0_NODE)
-#define PWM_FLAGS	FLAGS_OR_ZERO(PWM_LED0_NODE)
+#define PWM_FLAGS	DT_PWMS_FLAGS(PWM_LED0_NODE)
 #else
 #error "Unsupported board: pwm-led0 devicetree alias is not defined"
-#define PWM_LABEL	""
+#define PWM_CTLR	DT_INVALID_NODE
 #define PWM_CHANNEL	0
 #define PWM_FLAGS	0
 #endif
@@ -49,16 +39,16 @@
 
 void main(void)
 {
-	struct device *pwm;
+	const struct device *pwm;
 	uint32_t pulse_width = 0U;
 	uint8_t dir = 1U;
 	int ret;
 
 	printk("PWM-based LED fade\n");
 
-	pwm = device_get_binding(PWM_LABEL);
-	if (!pwm) {
-		printk("Error: didn't find %s device\n", PWM_LABEL);
+	pwm = DEVICE_DT_GET(PWM_CTLR);
+	if (!device_is_ready(pwm)) {
+		printk("Error: PWM device %s is not ready\n", pwm->name);
 		return;
 	}
 

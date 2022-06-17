@@ -33,7 +33,7 @@ static inline unsigned int prbs_read(volatile uint32_t *reg_status,
 	return result;
 }
 
-static int entropy_prbs_get_entropy(struct device *dev, uint8_t *buffer,
+static int entropy_prbs_get_entropy(const struct device *dev, uint8_t *buffer,
 					 uint16_t length)
 {
 	while (length > 0) {
@@ -50,7 +50,7 @@ static int entropy_prbs_get_entropy(struct device *dev, uint8_t *buffer,
 	return 0;
 }
 
-static int entropy_prbs_init(struct device *dev)
+static int entropy_prbs_init(const struct device *dev)
 {
 	return 0;
 }
@@ -59,7 +59,7 @@ static const struct entropy_driver_api entropy_prbs_api = {
 	.get_entropy = entropy_prbs_get_entropy
 };
 
-DEVICE_AND_API_INIT(entropy_prbs, DT_INST_LABEL(0),
-		    entropy_prbs_init, NULL, NULL,
+DEVICE_DT_INST_DEFINE(0,
+		    entropy_prbs_init, NULL, NULL, NULL,
 		    PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    &entropy_prbs_api);

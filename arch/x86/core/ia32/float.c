@@ -145,7 +145,7 @@ static inline void z_do_sse_regs_init(void)
  */
 static void FpCtxSave(struct k_thread *thread)
 {
-#ifdef CONFIG_SSE
+#ifdef CONFIG_X86_SSE
 	if ((thread->base.user_options & K_SSE_REGS) != 0) {
 		z_do_fp_and_sse_regs_save(&thread->arch.preempFloatReg);
 		return;
@@ -163,7 +163,7 @@ static void FpCtxSave(struct k_thread *thread)
 static inline void FpCtxInit(struct k_thread *thread)
 {
 	z_do_fp_regs_init();
-#ifdef CONFIG_SSE
+#ifdef CONFIG_X86_SSE
 	if ((thread->base.user_options & K_SSE_REGS) != 0) {
 		z_do_sse_regs_init();
 	}
@@ -179,7 +179,7 @@ static inline void FpCtxInit(struct k_thread *thread)
  * The locking isn't really needed when the routine is called by a cooperative
  * thread (since context switching can't occur), but it is harmless.
  */
-void k_float_enable(struct k_thread *thread, unsigned int options)
+void z_float_enable(struct k_thread *thread, unsigned int options)
 {
 	unsigned int imask;
 	struct k_thread *fp_owner;
@@ -328,4 +328,5 @@ void _FpNotAvailableExcHandler(z_arch_esf_t *pEsf)
 
 	k_float_enable(_current, _FP_USER_MASK);
 }
-_EXCEPTION_CONNECT_NOCODE(_FpNotAvailableExcHandler, IV_DEVICE_NOT_AVAILABLE);
+_EXCEPTION_CONNECT_NOCODE(_FpNotAvailableExcHandler,
+		IV_DEVICE_NOT_AVAILABLE, 0);

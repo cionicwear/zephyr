@@ -20,12 +20,13 @@
 #include <kernel_structs.h>
 #include <arch/cpu.h>
 #include <swap_macros.h>
+#include <arch/arc/asm-compat/assembler.h>
 
 GTEXT(_isr_wrapper)
 GTEXT(_isr_demux)
 
-#if defined(CONFIG_SYS_POWER_MANAGEMENT)
-GTEXT(z_sys_power_save_idle_exit)
+#if defined(CONFIG_PM)
+GTEXT(z_pm_save_idle_exit)
 #endif
 
 /*
@@ -201,7 +202,7 @@ From RIRQ:
  */
 
 SECTION_FUNC(TEXT, _isr_wrapper)
-#if defined(CONFIG_ARC_FIRQ)
+#ifdef CONFIG_ARC_FIRQ
 #if CONFIG_RGF_NUM_BANKS == 1
 /* free r0 here, use r0 to check whether irq is firq.
  * for rirq,  as sp will not change and r0 already saved, this action
@@ -220,8 +221,7 @@ SECTION_FUNC(TEXT, _isr_wrapper)
 	_create_irq_stack_frame
 	lr r0, [_ARC_V2_STATUS32_P0]
 	st_s r0, [sp, ___isf_t_status32_OFFSET]
-	lr r0, [_ARC_V2_ERET]
-	st_s r0, [sp, ___isf_t_pc_OFFSET]
+	st ilink, [sp, ___isf_t_pc_OFFSET]
 
 	mov_s r3, _firq_exit
 	mov_s r2, _firq_enter
@@ -239,51 +239,48 @@ rirq_path:
 	j_s [r2]
 #endif
 #else
-	mov_s r3, _rirq_exit
-	mov_s r2, _rirq_enter
+	MOVR r3, _rirq_exit
+	MOVR r2, _rirq_enter
 	j_s [r2]
 #endif
 
+/* r0, r1, and r3 will be used in exit_tickless_idle macro */
 .macro exit_tickless_idle
-#if defined(CONFIG_SYS_POWER_MANAGEMENT)
+#if defined(CONFIG_PM)
 	clri r0 /* do not interrupt exiting tickless idle operations */
-	mov_s r1, _kernel
-	ld_s r0, [r1, _kernel_offset_to_idle] /* requested idle duration */
-	breq r0, 0, _skip_sys_power_save_idle_exit
+	MOVR r1, _kernel
+	/* z_kernel.idle is 32 bit despite of platform bittnes */
+	ld_s r3, [r1, _kernel_offset_to_idle] /* requested idle duration */
+	breq r3, 0, _skip_pm_save_idle_exit
 
 	st 0, [r1, _kernel_offset_to_idle] /* zero idle duration */
-	push_s blink
-	jl z_sys_power_save_idle_exit
-	pop_s blink
+	PUSHR blink
+	jl z_pm_save_idle_exit
+	POPR blink
 
-_skip_sys_power_save_idle_exit:
+_skip_pm_save_idle_exit:
 	seti r0
 #endif
 .endm
 
 /* when getting here, r3 contains the interrupt exit stub to call */
 SECTION_FUNC(TEXT, _isr_demux)
-	push_s r3
+	PUSHR r3
 
 /* according to ARCv2 ISA, r25, r30, r58, r59 are caller-saved
  * scratch registers, possibly used by interrupt handlers
  */
-	push r25
-	push r30
+	PUSHR r25
+	PUSHR r30
 #ifdef CONFIG_ARC_HAS_ACCL_REGS
-	push r58
-	push r59
+	PUSHR r58
+	PUSHR r59
 #endif
 
-#ifdef CONFIG_EXECUTION_BENCHMARKING
-	bl read_timer_start_of_isr
-#endif
-
-#if defined(CONFIG_TRACING)
+#ifdef CONFIG_TRACING_ISR
 	bl sys_trace_isr_enter
 #endif
 	/* cannot be done before this point because we must be able to run C */
-	/* r0 is available to be stomped here, and exit_tickless_idle uses it */
 	exit_tickless_idle
 
 	lr r0, [_ARC_V2_ICAUSE]
@@ -295,33 +292,30 @@ irq_hint_handled:
 
 	sub r0, r0, 16
 
-	mov_s r1, _sw_isr_table
-	add3 r0, r1, r0   /* table entries are 8-bytes wide */
-
-	ld_s r1, [r0, 4] /* ISR into r1 */
-#ifdef CONFIG_EXECUTION_BENCHMARKING
-	push_s r0
-	push_s r1
-	bl read_timer_end_of_isr
-	pop_s r1
-	pop_s r0
-#endif
+	MOVR r1, _sw_isr_table
+	/* SW ISR table entries are 8-bytes wide for 32bit ISA and
+	 * 16-bytes wide for 64bit ISA */
+	ASLR r0, r0, (ARC_REGSHIFT + 1)
+	ADDR r0, r1, r0
+	/* ISR into r1 */
+	LDR r1, r0, ARC_REGSZ
 	jl_s.d [r1]
-	ld_s r0, [r0] /* delay slot: ISR parameter into r0  */
+	/* delay slot: ISR parameter into r0 */
+	LDR r0, r0
 
 #ifdef CONFIG_TRACING_ISR
 	bl sys_trace_isr_exit
 #endif
 
 #ifdef CONFIG_ARC_HAS_ACCL_REGS
-	pop r59
-	pop r58
+	POPR r59
+	POPR r58
 #endif
 
-	pop r30
-	pop r25
+	POPR r30
+	POPR r25
 
 	/* back from ISR, jump to exit stub */
-	pop_s r3
+	POPR r3
 	j_s [r3]
 	nop_s

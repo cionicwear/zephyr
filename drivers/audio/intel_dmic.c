@@ -10,6 +10,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#define DT_DRV_COMPAT intel_dmic
+
 #include <errno.h>
 #include <zephyr.h>
 #include <device.h>
@@ -19,6 +21,9 @@
 #include <audio/dmic.h>
 #include "intel_dmic.h"
 #include "decimation/pdm_decim_fir.h"
+
+#define DMA_CHANNEL_DMIC_RXA DT_INST_DMAS_CELL_BY_NAME(0, rx_a, channel)
+#define DMA_CHANNEL_DMIC_RXB DT_INST_DMAS_CELL_BY_NAME(0, rx_b, channel)
 
 #define LOG_LEVEL CONFIG_AUDIO_DMIC_LOG_LEVEL
 #include <logging/log.h>
@@ -133,7 +138,7 @@ static struct _dmic_pdata {
 	uint8_t num_streams;
 	uint8_t reserved;
 	struct _stream_data streams[DMIC_MAX_STREAMS];
-	struct device *dma_dev;
+	const struct device *dma_dev;
 } dmic_private;
 
 static inline void dmic_parse_channel_map(uint32_t channel_map_lo,
@@ -714,8 +719,9 @@ static int source_ipm_helper(struct pdm_chan_cfg *config, uint32_t *source_mask,
 	return ipm;
 }
 
-static int configure_registers(struct device *dev,
-		struct dmic_configuration *hw_cfg, struct dmic_cfg *config)
+static int configure_registers(const struct device *dev,
+			       struct dmic_configuration *hw_cfg,
+			       struct dmic_cfg *config)
 {
 	uint8_t skew;
 	uint8_t swap_mask;
@@ -949,7 +955,8 @@ static int configure_registers(struct device *dev,
 	return 0;
 }
 
-static void dmic_dma_callback(void *arg, uint32_t chan, int err_code)
+static void dmic_dma_callback(const struct device *dev, void *arg,
+			      uint32_t chan, int err_code)
 {
 	void *buffer;
 	size_t size;
@@ -1004,7 +1011,7 @@ static void dmic_dma_callback(void *arg, uint32_t chan, int err_code)
 	}
 }
 
-static int dmic_set_config(struct device *dev, struct dmic_cfg *config)
+static int dmic_set_config(const struct device *dev, struct dmic_cfg *config)
 {
 	struct decim_modes modes_a;
 	struct decim_modes modes_b;
@@ -1107,7 +1114,7 @@ static int dmic_set_config(struct device *dev, struct dmic_cfg *config)
 }
 
 /* start the DMIC for capture */
-static void dmic_start(struct device *dev)
+static void dmic_start(const struct device *dev)
 {
 	struct _stream_data *stream;
 	unsigned int key;
@@ -1257,7 +1264,8 @@ static void dmic_stop(void)
 	}
 }
 
-static int dmic_trigger_device(struct device *dev, enum dmic_trigger cmd)
+static int dmic_trigger_device(const struct device *dev,
+			       enum dmic_trigger cmd)
 {
 	unsigned int key;
 
@@ -1292,7 +1300,7 @@ static inline uint8_t dmic_parse_clk_skew_map(uint32_t skew_map, uint8_t pdm)
 	return (uint8_t)((skew_map >> ((pdm & BIT_MASK(3)) * 4U)) & BIT_MASK(4));
 }
 
-static int dmic_initialize_device(struct device *dev)
+static int dmic_initialize_device(const struct device *dev)
 {
 	int stream;
 	struct _stream_data *stream_data;
@@ -1315,7 +1323,8 @@ static int dmic_initialize_device(struct device *dev)
 	return 0;
 }
 
-static int dmic_configure_device(struct device *dev, struct dmic_cfg *config)
+static int dmic_configure_device(const struct device *dev,
+				 struct dmic_cfg *config)
 {
 	int ret = 0;
 
@@ -1333,8 +1342,8 @@ static int dmic_configure_device(struct device *dev, struct dmic_cfg *config)
 	return ret;
 }
 
-static int dmic_read_device(struct device *dev, uint8_t stream,
-		void **buffer, size_t *size, int32_t timeout)
+static int dmic_read_device(const struct device *dev, uint8_t stream,
+			    void **buffer, size_t *size, int32_t timeout)
 {
 	int ret;
 
@@ -1382,9 +1391,9 @@ int dmic_configure_dma(struct pcm_stream_cfg *config, uint8_t num_streams)
 		.dma_callback		= dmic_dma_callback,
 	};
 
-	dmic_private.dma_dev = device_get_binding(DMIC_DMA_DEV_NAME);
-	if (!dmic_private.dma_dev) {
-		LOG_ERR("Failed to bind to device: %s", DMIC_DMA_DEV_NAME);
+	dmic_private.dma_dev = DEVICE_DT_GET(DT_INST_DMAS_CTLR_BY_IDX(0, 0));
+	if (!device_is_ready(dmic_private.dma_dev)) {
+		LOG_ERR("Failed - device is not ready: %s", dmic_private.dma_dev->name);
 		return -ENODEV;
 	}
 
@@ -1441,5 +1450,5 @@ static struct _dmic_ops dmic_ops = {
 	.read = dmic_read_device,
 };
 
-DEVICE_AND_API_INIT(dmic, "PDM", &dmic_initialize_device, NULL, NULL,
-		POST_KERNEL, CONFIG_AUDIO_DMIC_INIT_PRIORITY, &dmic_ops);
+DEVICE_DT_INST_DEFINE(0, &dmic_initialize_device, NULL, NULL, NULL, POST_KERNEL,
+		      CONFIG_AUDIO_DMIC_INIT_PRIORITY, &dmic_ops);

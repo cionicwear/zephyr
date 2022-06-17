@@ -10,9 +10,6 @@
 #include <drivers/pinmux.h>
 #include <soc.h>
 #include <sys/sys_io.h>
-#include <gpio/gpio_cmsdk_ahb.h>
-
-#include "pinmux/pinmux.h"
 
 #define IOMUX_MAIN_INSEL	(0x68 >> 2)
 #define IOMUX_MAIN_OUTSEL	(0x70 >> 2)
@@ -59,7 +56,7 @@ static void arm_musca_b1_pinmux_defaults(void)
 }
 #endif
 
-static int arm_musca_pinmux_init(struct device *port)
+static int arm_musca_pinmux_init(const struct device *port)
 {
 	ARG_UNUSED(port);
 

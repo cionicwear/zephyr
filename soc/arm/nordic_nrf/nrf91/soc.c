@@ -34,7 +34,7 @@ extern void z_arm_nmi_init(void);
 #define LOG_LEVEL CONFIG_SOC_LOG_LEVEL
 LOG_MODULE_REGISTER(soc);
 
-static int nordicsemi_nrf91_init(struct device *arg)
+static int nordicsemi_nrf91_init(const struct device *arg)
 {
 	uint32_t key;
 
@@ -61,11 +61,5 @@ void arch_busy_wait(uint32_t time_us)
 {
 	nrfx_coredep_delay_us(time_us);
 }
-
-void z_platform_init(void)
-{
-	SystemInit();
-}
-
 
 SYS_INIT(nordicsemi_nrf91_init, PRE_KERNEL_1, 0);

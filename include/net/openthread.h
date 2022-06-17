@@ -62,6 +62,12 @@ struct openthread_context {
 
 	/** A mutex to protect API calls from being preempted. */
 	struct k_mutex api_lock;
+
+	/** A work queue for all OpenThread activity */
+	struct k_work_q work_q;
+
+	/** Work object for OpenThread internal usage */
+	struct k_work api_work;
 };
 /**
  * INTERNAL_HIDDEN @endcond
@@ -117,6 +123,19 @@ int openthread_start(struct openthread_context *ot_context);
  * @param ot_context Context to lock.
  */
 void openthread_api_mutex_lock(struct openthread_context *ot_context);
+
+/**
+ * @brief Try to lock internal mutex before accessing OT API.
+ *
+ * @details This function behaves like openthread_api_mutex_lock() provided that
+ * the internal mutex is unlocked. Otherwise, it exists immediately and returns
+ * a negative value.
+ *
+ * @param ot_context Context to lock.
+ * @retval 0  On success.
+ * @retval <0 On failure.
+ */
+int openthread_api_mutex_try_lock(struct openthread_context *ot_context);
 
 /**
  * @brief Unlock internal mutex after accessing OT API.

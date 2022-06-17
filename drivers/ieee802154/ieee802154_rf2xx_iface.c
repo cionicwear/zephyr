@@ -13,20 +13,21 @@
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #include <errno.h>
-#include <assert.h>
 
 #include <device.h>
 #include <drivers/spi.h>
 #include <drivers/gpio.h>
 
+#include <net/ieee802154_radio.h>
+
 #include "ieee802154_rf2xx.h"
 #include "ieee802154_rf2xx_regs.h"
 #include "ieee802154_rf2xx_iface.h"
 
-void rf2xx_iface_phy_rst(struct device *dev)
+void rf2xx_iface_phy_rst(const struct device *dev)
 {
-	const struct rf2xx_config *conf = dev->config_info;
-	const struct rf2xx_context *ctx = dev->driver_data;
+	const struct rf2xx_config *conf = dev->config;
+	const struct rf2xx_context *ctx = dev->data;
 
 	/* Ensure control lines have correct levels. */
 	gpio_pin_set(ctx->reset_gpio, conf->reset.pin, 0);
@@ -39,10 +40,10 @@ void rf2xx_iface_phy_rst(struct device *dev)
 	k_busy_wait(10);
 	gpio_pin_set(ctx->reset_gpio, conf->reset.pin, 0);
 }
-void rf2xx_iface_phy_tx_start(struct device *dev)
+void rf2xx_iface_phy_tx_start(const struct device *dev)
 {
-	const struct rf2xx_config *conf = dev->config_info;
-	const struct rf2xx_context *ctx = dev->driver_data;
+	const struct rf2xx_config *conf = dev->config;
+	const struct rf2xx_context *ctx = dev->data;
 
 	/* Start TX transmission at rise edge */
 	gpio_pin_set(ctx->slptr_gpio, conf->slptr.pin, 1);
@@ -52,10 +53,10 @@ void rf2xx_iface_phy_tx_start(struct device *dev)
 	gpio_pin_set(ctx->slptr_gpio, conf->slptr.pin, 0);
 }
 
-uint8_t rf2xx_iface_reg_read(struct device *dev,
-			  uint8_t addr)
+uint8_t rf2xx_iface_reg_read(const struct device *dev,
+			     uint8_t addr)
 {
-	const struct rf2xx_context *ctx = dev->driver_data;
+	const struct rf2xx_context *ctx = dev->data;
 	uint8_t status;
 	uint8_t regval = 0;
 
@@ -95,11 +96,11 @@ uint8_t rf2xx_iface_reg_read(struct device *dev,
 	return regval;
 }
 
-void rf2xx_iface_reg_write(struct device *dev,
+void rf2xx_iface_reg_write(const struct device *dev,
 			   uint8_t addr,
 			   uint8_t data)
 {
-	const struct rf2xx_context *ctx = dev->driver_data;
+	const struct rf2xx_context *ctx = dev->data;
 	uint8_t status;
 
 	addr |= RF2XX_RF_CMD_REG_W;
@@ -136,10 +137,10 @@ void rf2xx_iface_reg_write(struct device *dev,
 		(addr & ~(RF2XX_RF_CMD_REG_W)), status, data);
 }
 
-uint8_t rf2xx_iface_bit_read(struct device *dev,
-			  uint8_t addr,
-			  uint8_t mask,
-			  uint8_t pos)
+uint8_t rf2xx_iface_bit_read(const struct device *dev,
+			     uint8_t addr,
+			     uint8_t mask,
+			     uint8_t pos)
 {
 	uint8_t ret;
 
@@ -150,7 +151,7 @@ uint8_t rf2xx_iface_bit_read(struct device *dev,
 	return ret;
 }
 
-void rf2xx_iface_bit_write(struct device *dev,
+void rf2xx_iface_bit_write(const struct device *dev,
 			   uint8_t reg_addr,
 			   uint8_t mask,
 			   uint8_t pos,
@@ -166,11 +167,11 @@ void rf2xx_iface_bit_write(struct device *dev,
 	rf2xx_iface_reg_write(dev, reg_addr, new_value);
 }
 
-void rf2xx_iface_frame_read(struct device *dev,
+void rf2xx_iface_frame_read(const struct device *dev,
 			    uint8_t *data,
 			    uint8_t length)
 {
-	const struct rf2xx_context *ctx = dev->driver_data;
+	const struct rf2xx_context *ctx = dev->data;
 	uint8_t cmd = RF2XX_RF_CMD_FRAME_R;
 
 	const struct spi_buf tx_buf = {
@@ -198,11 +199,11 @@ void rf2xx_iface_frame_read(struct device *dev,
 	LOG_HEXDUMP_DBG(data + RX2XX_FRAME_HEADER_SIZE, length, "payload");
 }
 
-void rf2xx_iface_frame_write(struct device *dev,
+void rf2xx_iface_frame_write(const struct device *dev,
 			     uint8_t *data,
 			     uint8_t length)
 {
-	const struct rf2xx_context *ctx = dev->driver_data;
+	const struct rf2xx_context *ctx = dev->data;
 	uint8_t cmd = RF2XX_RF_CMD_FRAME_W;
 	uint8_t status;
 	uint8_t phr;
@@ -249,12 +250,12 @@ void rf2xx_iface_frame_write(struct device *dev,
 	LOG_HEXDUMP_DBG(data, length, "payload");
 }
 
-void rf2xx_iface_sram_read(struct device *dev,
+void rf2xx_iface_sram_read(const struct device *dev,
 			    uint8_t address,
 			    uint8_t *data,
 			    uint8_t length)
 {
-	const struct rf2xx_context *ctx = dev->driver_data;
+	const struct rf2xx_context *ctx = dev->data;
 	uint8_t cmd = RF2XX_RF_CMD_SRAM_R;
 	uint8_t status[2];
 

@@ -128,7 +128,7 @@ static uint32_t hinnant(int y, int m, int d)
  * This function is long, but linear and easy to follow.
  */
 
-int get_value(struct device *dev, uint32_t *ticks)
+int get_value(const struct device *dev, uint32_t *ticks)
 {
 	struct state state, state2;
 	uint64_t *pun = (uint64_t *) &state;
@@ -154,14 +154,14 @@ int get_value(struct device *dev, uint32_t *ticks)
 	 * the HOUR_PM flag before we adjust for BCD.
 	 */
 
-	if (state.status_b & STATUS_B_24HR) {
+	if ((state.status_b & STATUS_B_24HR) != 0U) {
 		pm = false;
 	} else {
 		pm = ((state.hour & HOUR_PM) == HOUR_PM);
 		state.hour &= ~HOUR_PM;
 	}
 
-	if (!(state.status_b & STATUS_B_BIN)) {
+	if ((state.status_b & STATUS_B_BIN) == 0U) {
 		uint8_t *cp = (uint8_t *) &state;
 		int i;
 
@@ -192,7 +192,7 @@ int get_value(struct device *dev, uint32_t *ticks)
 	return 0;
 }
 
-static int init(struct device *dev)
+static int init(const struct device *dev)
 {
 	ARG_UNUSED(dev);
 
@@ -208,5 +208,5 @@ static const struct counter_driver_api api = {
 	.get_value = get_value
 };
 
-DEVICE_AND_API_INIT(counter_cmos, "CMOS", init, NULL, &info,
+DEVICE_DEFINE(counter_cmos, "CMOS", init, NULL, NULL, &info,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE, &api);

@@ -300,9 +300,10 @@ static int mtls_get_unused_session_index(void)
 	return -1;
 }
 
-static int mtls_session_setup(struct device *dev, struct cipher_ctx *ctx,
-		       enum cipher_algo algo, enum cipher_mode mode,
-		       enum cipher_op op_type)
+static int mtls_session_setup(const struct device *dev,
+			      struct cipher_ctx *ctx,
+			      enum cipher_algo algo, enum cipher_mode mode,
+			      enum cipher_op op_type)
 {
 	mbedtls_aes_context *aes_ctx;
 	mbedtls_ccm_context *ccm_ctx;
@@ -431,7 +432,7 @@ static int mtls_session_setup(struct device *dev, struct cipher_ctx *ctx,
 	return ret;
 }
 
-static int mtls_session_free(struct device *dev, struct cipher_ctx *ctx)
+static int mtls_session_free(const struct device *dev, struct cipher_ctx *ctx)
 {
 	struct mtls_shim_session *mtls_session =
 		(struct mtls_shim_session *)ctx->drv_sessn_state;
@@ -450,12 +451,12 @@ static int mtls_session_free(struct device *dev, struct cipher_ctx *ctx)
 	return 0;
 }
 
-static int mtls_query_caps(struct device *dev)
+static int mtls_query_caps(const struct device *dev)
 {
 	return MTLS_SUPPORT;
 }
 
-static int mtls_shim_init(struct device *dev)
+static int mtls_shim_init(const struct device *dev)
 {
 	return 0;
 }
@@ -467,7 +468,7 @@ static struct crypto_driver_api mtls_crypto_funcs = {
 	.query_hw_caps = mtls_query_caps,
 };
 
-DEVICE_AND_API_INIT(crypto_mtls, CONFIG_CRYPTO_MBEDTLS_SHIM_DRV_NAME,
-		    &mtls_shim_init, NULL, NULL,
+DEVICE_DEFINE(crypto_mtls, CONFIG_CRYPTO_MBEDTLS_SHIM_DRV_NAME,
+		    &mtls_shim_init, NULL, NULL, NULL,
 		    POST_KERNEL, CONFIG_CRYPTO_INIT_PRIORITY,
 		    (void *)&mtls_crypto_funcs);

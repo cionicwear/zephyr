@@ -37,9 +37,10 @@ static void hfclk_on_callback(struct onoff_manager *mgr,
 	nrf_temp_task_trigger(NRF_TEMP, NRF_TEMP_TASK_START);
 }
 
-static int temp_nrf5_sample_fetch(struct device *dev, enum sensor_channel chan)
+static int temp_nrf5_sample_fetch(const struct device *dev,
+				  enum sensor_channel chan)
 {
-	struct temp_nrf5_data *data = dev->driver_data;
+	struct temp_nrf5_data *data = dev->data;
 	struct onoff_client cli;
 	int r;
 
@@ -61,7 +62,7 @@ static int temp_nrf5_sample_fetch(struct device *dev, enum sensor_channel chan)
 	k_sem_take(&data->device_sync_sem, K_FOREVER);
 
 	r = onoff_release(data->clk_mgr);
-	__ASSERT_NO_MSG(!r);
+	__ASSERT_NO_MSG(r >= 0);
 
 	data->sample = nrf_temp_result_get(NRF_TEMP);
 	LOG_DBG("sample: %d", data->sample);
@@ -72,11 +73,11 @@ static int temp_nrf5_sample_fetch(struct device *dev, enum sensor_channel chan)
 	return 0;
 }
 
-static int temp_nrf5_channel_get(struct device *dev,
-				enum sensor_channel chan,
-				struct sensor_value *val)
+static int temp_nrf5_channel_get(const struct device *dev,
+				 enum sensor_channel chan,
+				 struct sensor_value *val)
 {
-	struct temp_nrf5_data *data = dev->driver_data;
+	struct temp_nrf5_data *data = dev->data;
 	int32_t uval;
 
 
@@ -95,8 +96,8 @@ static int temp_nrf5_channel_get(struct device *dev,
 
 static void temp_nrf5_isr(void *arg)
 {
-	struct device *dev = (struct device *)arg;
-	struct temp_nrf5_data *data = dev->driver_data;
+	const struct device *dev = (const struct device *)arg;
+	struct temp_nrf5_data *data = dev->data;
 
 	nrf_temp_event_clear(NRF_TEMP, NRF_TEMP_EVENT_DATARDY);
 	k_sem_give(&data->device_sync_sem);
@@ -107,11 +108,9 @@ static const struct sensor_driver_api temp_nrf5_driver_api = {
 	.channel_get = temp_nrf5_channel_get,
 };
 
-DEVICE_DECLARE(temp_nrf5);
-
-static int temp_nrf5_init(struct device *dev)
+static int temp_nrf5_init(const struct device *dev)
 {
-	struct temp_nrf5_data *data = dev->driver_data;
+	struct temp_nrf5_data *data = dev->data;
 
 	LOG_DBG("");
 
@@ -120,14 +119,14 @@ static int temp_nrf5_init(struct device *dev)
 		z_nrf_clock_control_get_onoff(CLOCK_CONTROL_NRF_SUBSYS_HF);
 	__ASSERT_NO_MSG(data->clk_mgr);
 
-	k_sem_init(&data->device_sync_sem, 0, UINT_MAX);
+	k_sem_init(&data->device_sync_sem, 0, K_SEM_MAX_LIMIT);
 	k_mutex_init(&data->mutex);
 
 	IRQ_CONNECT(
 		DT_INST_IRQN(0),
 		DT_INST_IRQ(0, priority),
 		temp_nrf5_isr,
-		DEVICE_GET(temp_nrf5),
+		DEVICE_DT_INST_GET(0),
 		0);
 	irq_enable(DT_INST_IRQN(0));
 
@@ -138,9 +137,9 @@ static int temp_nrf5_init(struct device *dev)
 
 static struct temp_nrf5_data temp_nrf5_driver;
 
-DEVICE_AND_API_INIT(temp_nrf5,
-		    DT_INST_LABEL(0),
+DEVICE_DT_INST_DEFINE(0,
 		    temp_nrf5_init,
+		    NULL,
 		    &temp_nrf5_driver,
 		    NULL,
 		    POST_KERNEL,

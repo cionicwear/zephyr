@@ -38,7 +38,7 @@ void sys_arch_reboot(int type)
 	NVIC_SystemReset();
 }
 
-static int nordicsemi_nrf51_init(struct device *arg)
+static int nordicsemi_nrf51_init(const struct device *arg)
 {
 	uint32_t key;
 
@@ -66,11 +66,6 @@ void arch_busy_wait(uint32_t time_us)
 
 	time_us -= DELAY_CALL_OVERHEAD_US;
 	nrfx_coredep_delay_us(time_us);
-}
-
-void z_platform_init(void)
-{
-	SystemInit();
 }
 
 SYS_INIT(nordicsemi_nrf51_init, PRE_KERNEL_1, 0);

@@ -84,7 +84,7 @@ static void thread_handler(void *p1, void *p2, void *p3)
 	k_timer_start(&timer, DURATION, K_NO_WAIT);
 }
 
-/*test cases*/
+/* test cases */
 
 /**
  * @brief Validate the behavior of cooperative thread
@@ -142,7 +142,7 @@ void test_sleep_cooperative(void)
 
 void test_busy_wait_cooperative(void)
 {
-	/* set current thread to a preemptible priority */
+	/* set current thread to a cooperative priority */
 	init_prio = -1;
 	setup_threads();
 

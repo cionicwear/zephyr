@@ -12,6 +12,10 @@
 #include <sys/onoff.h>
 #include <drivers/clock_control.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** @brief Clocks handled by the CLOCK peripheral.
  *
  * Enum shall be used as a sys argument in clock_control API.
@@ -19,6 +23,12 @@
 enum clock_control_nrf_type {
 	CLOCK_CONTROL_NRF_TYPE_HFCLK,
 	CLOCK_CONTROL_NRF_TYPE_LFCLK,
+#if NRF_CLOCK_HAS_HFCLK192M
+	CLOCK_CONTROL_NRF_TYPE_HFCLK192M,
+#endif
+#if NRF_CLOCK_HAS_HFCLKAUDIO
+	CLOCK_CONTROL_NRF_TYPE_HFCLKAUDIO,
+#endif
 	CLOCK_CONTROL_NRF_TYPE_COUNT
 };
 
@@ -29,12 +39,16 @@ enum clock_control_nrf_type {
 	((clock_control_subsys_t)CLOCK_CONTROL_NRF_TYPE_HFCLK)
 #define CLOCK_CONTROL_NRF_SUBSYS_LF \
 	((clock_control_subsys_t)CLOCK_CONTROL_NRF_TYPE_LFCLK)
+#define CLOCK_CONTROL_NRF_SUBSYS_HF192M \
+	((clock_control_subsys_t)CLOCK_CONTROL_NRF_TYPE_HFCLK192M)
+#define CLOCK_CONTROL_NRF_SUBSYS_HFAUDIO \
+	((clock_control_subsys_t)CLOCK_CONTROL_NRF_TYPE_HFCLKAUDIO)
 
 /** @brief LF clock start modes. */
 enum nrf_lfclk_start_mode {
-	NRF_LFCLK_START_MODE_NOWAIT,
-	NRF_LFCLK_START_MODE_SPINWAIT_RUNNING,
-	NRF_LFCLK_START_MODE_SPINWAIT_STABLE,
+	CLOCK_CONTROL_NRF_LF_START_NOWAIT,
+	CLOCK_CONTROL_NRF_LF_START_AVAILABLE,
+	CLOCK_CONTROL_NRF_LF_START_STABLE,
 };
 
 /* Define 32KHz clock source */
@@ -78,10 +92,6 @@ enum nrf_lfclk_start_mode {
 #endif
 #ifdef CONFIG_CLOCK_CONTROL_NRF_K32SRC_20PPM
 #define CLOCK_CONTROL_NRF_K32SRC_ACCURACY 7
-#endif
-
-#if defined(CONFIG_USB_NRFX)
-void nrf5_power_usb_power_int_enable(bool enable);
 #endif
 
 /** @brief Force LF clock calibration. */
@@ -140,5 +150,9 @@ void z_nrf_clock_bt_ctlr_hf_request(void);
  * See z_nrf_clock_bt_ctlr_hf_request for details.
  */
 void z_nrf_clock_bt_ctlr_hf_release(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* ZEPHYR_INCLUDE_DRIVERS_CLOCK_CONTROL_NRF_CLOCK_CONTROL_H_ */

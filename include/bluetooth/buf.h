@@ -21,6 +21,11 @@
 #include <zephyr/types.h>
 #include <net/buf.h>
 #include <bluetooth/hci.h>
+#include <sys/util.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /** Possible types of buffers passed around the Bluetooth stack */
 enum bt_buf_type {
@@ -32,12 +37,18 @@ enum bt_buf_type {
 	BT_BUF_ACL_OUT,
 	/** Incoming ACL data */
 	BT_BUF_ACL_IN,
+	/** Outgoing ISO data */
+	BT_BUF_ISO_OUT,
+	/** Incoming ISO data */
+	BT_BUF_ISO_IN,
 	/** H:4 data */
 	BT_BUF_H4,
 };
 
-/** Minimum amount of user data size for buffers passed to the stack. */
-#define BT_BUF_USER_DATA_MIN __DEPRECATED_MACRO 4
+/** @brief This is a base type for bt_buf user data. */
+struct bt_buf_data {
+	uint8_t type;
+};
 
 #if defined(CONFIG_BT_HCI_RAW)
 #define BT_BUF_RESERVE MAX(CONFIG_BT_HCI_RESERVE, CONFIG_BT_HCI_RAW_RESERVE)
@@ -45,10 +56,29 @@ enum bt_buf_type {
 #define BT_BUF_RESERVE CONFIG_BT_HCI_RESERVE
 #endif
 
+/** Helper to include reserved HCI data in buffer calculations */
 #define BT_BUF_SIZE(size) (BT_BUF_RESERVE + (size))
 
-/** Data size neeed for HCI RX buffers */
-#define BT_BUF_RX_SIZE (BT_BUF_SIZE(CONFIG_BT_RX_BUF_LEN))
+/** Helper to calculate needed buffer size for HCI ACL packets */
+#define BT_BUF_ACL_SIZE(size) BT_BUF_SIZE(BT_HCI_ACL_HDR_SIZE + (size))
+
+/** Helper to calculate needed buffer size for HCI Event packets. */
+#define BT_BUF_EVT_SIZE(size) BT_BUF_SIZE(BT_HCI_EVT_HDR_SIZE + (size))
+
+/** Helper to calculate needed buffer size for HCI Command packets. */
+#define BT_BUF_CMD_SIZE(size) BT_BUF_SIZE(BT_HCI_CMD_HDR_SIZE + (size))
+
+/** Data size needed for HCI ACL RX buffers */
+#define BT_BUF_ACL_RX_SIZE BT_BUF_ACL_SIZE(CONFIG_BT_BUF_ACL_RX_SIZE)
+
+/** Data size needed for HCI Event RX buffers */
+#define BT_BUF_EVT_RX_SIZE BT_BUF_EVT_SIZE(CONFIG_BT_BUF_EVT_RX_SIZE)
+
+/** Data size needed for HCI ACL or Event RX buffers */
+#define BT_BUF_RX_SIZE (MAX(BT_BUF_ACL_RX_SIZE, BT_BUF_EVT_RX_SIZE))
+
+/** Data size needed for HCI Command buffers. */
+#define BT_BUF_CMD_TX_SIZE BT_BUF_CMD_SIZE(CONFIG_BT_BUF_CMD_TX_SIZE)
 
 /** Allocate a buffer for incoming data
  *
@@ -110,7 +140,7 @@ struct net_buf *bt_buf_get_evt(uint8_t evt, bool discardable, k_timeout_t timeou
  */
 static inline void bt_buf_set_type(struct net_buf *buf, enum bt_buf_type type)
 {
-	*(uint8_t *)net_buf_user_data(buf) = type;
+	((struct bt_buf_data *)net_buf_user_data(buf))->type = type;
 }
 
 /** Get the buffer type
@@ -121,17 +151,16 @@ static inline void bt_buf_set_type(struct net_buf *buf, enum bt_buf_type type)
  */
 static inline enum bt_buf_type bt_buf_get_type(struct net_buf *buf)
 {
-	/* De-referencing the pointer from net_buf_user_data(buf) as a
-	 * pointer to an enum causes issues on qemu_x86 because the true
-	 * size is 8-bit, but the enum is 32-bit on qemu_x86. So we put in
-	 * a temporary cast to 8-bit to ensure only 8 bits are read from
-	 * the pointer.
-	 */
-	return (enum bt_buf_type)(*(uint8_t *)net_buf_user_data(buf));
+	return (enum bt_buf_type)((struct bt_buf_data *)net_buf_user_data(buf))
+		->type;
 }
 
 /**
  * @}
  */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* ZEPHYR_INCLUDE_BLUETOOTH_BUF_H_ */

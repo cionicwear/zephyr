@@ -80,6 +80,8 @@ The frdm_k64f board configuration supports the following hardware features:
 +-----------+------------+-------------------------------------+
 | ADC       | on-chip    | adc                                 |
 +-----------+------------+-------------------------------------+
+| DAC       | on-chip    | dac                                 |
++-----------+------------+-------------------------------------+
 | PWM       | on-chip    | pwm                                 |
 +-----------+------------+-------------------------------------+
 | ETHERNET  | on-chip    | ethernet                            |
@@ -97,6 +99,8 @@ The frdm_k64f board configuration supports the following hardware features:
 | CAN       | on-chip    | can                                 |
 +-----------+------------+-------------------------------------+
 | RTC       | on-chip    | rtc                                 |
++-----------+------------+-------------------------------------+
+| DMA       | on-chip    | dma                                 |
 +-----------+------------+-------------------------------------+
 
 The default configuration can be found in the defconfig file:
@@ -219,35 +223,40 @@ Early versions of this board have an outdated version of the OpenSDA bootloader
 and require an update. Please see the `DAPLink Bootloader Update`_ page for
 instructions to update from the CMSIS-DAP bootloader to the DAPLink bootloader.
 
-Option 1: :ref:`opensda-daplink-onboard-debug-probe` (Recommended)
-------------------------------------------------------------------
+.. tabs::
 
-Install the :ref:`pyocd-debug-host-tools` and make sure they are in your search
-path.
+   .. group-tab:: OpenSDA DAPLink Onboard (Recommended)
 
-Follow the instructions in :ref:`opensda-daplink-onboard-debug-probe` to program
-the `OpenSDA DAPLink FRDM-K64F Firmware`_.
+        Install the :ref:`pyocd-debug-host-tools` and make sure they are in your search
+        path.
 
-Option 2: :ref:`opensda-jlink-onboard-debug-probe`
---------------------------------------------------
+        Follow the instructions in :ref:`opensda-daplink-onboard-debug-probe` to program
+        the `OpenSDA DAPLink FRDM-K64F Firmware`_.
 
-Install the :ref:`jlink-debug-host-tools` and make sure they are in your search
-path.
+   .. group-tab:: OpenSDA JLink Onboard
 
-Follow the instructions in :ref:`opensda-jlink-onboard-debug-probe` to program
-the `OpenSDA J-Link Generic Firmware for V3.2 Bootloader`_. Note that Segger
-does provide an OpenSDA J-Link Board-Specific Firmware for this board, however
-it is not compatible with the DAPLink bootloader.
+        Install the :ref:`jlink-debug-host-tools` and make sure they are in your search
+        path.
 
-Add the arguments ``-DBOARD_FLASH_RUNNER=jlink`` and
-``-DBOARD_DEBUG_RUNNER=jlink`` when you invoke ``west build`` to override the
-default runner from pyOCD to J-Link:
+        The version of J-Link firmware to program to the board depends on the version
+        of the DAPLink bootloader. Refer to `OpenSDA Serial and Debug Adapter`_ for
+        more details. On this page, change the pull-down menu for "Choose your board to
+        start" to FRDM-K64F, and review the section "To update your board with OpenSDA
+        applications". Note that Segger does provide an OpenSDA J-Link Board-Specific
+        Firmware for this board, however it is not compatible with the DAPLink
+        bootloader. After downloading the appropriate J-Link firmware, follow the
+        instructions in :ref:`opensda-jlink-onboard-debug-probe` to program to the
+        board.
 
-.. zephyr-app-commands::
-   :zephyr-app: samples/hello_world
-   :board: frdm_k64f
-   :gen-args: -DBOARD_FLASH_RUNNER=jlink -DBOARD_DEBUG_RUNNER=jlink
-   :goals: build
+        Add the arguments ``-DBOARD_FLASH_RUNNER=jlink`` and
+        ``-DBOARD_DEBUG_RUNNER=jlink`` when you invoke ``west build`` to override the
+        default runner from pyOCD to J-Link:
+
+        .. zephyr-app-commands::
+           :zephyr-app: samples/hello_world
+           :board: frdm_k64f
+           :gen-args: -DBOARD_FLASH_RUNNER=jlink -DBOARD_DEBUG_RUNNER=jlink
+           :goals: build
 
 Configuring a Console
 =====================
@@ -301,6 +310,29 @@ should see the following message in the terminal:
    ***** Booting Zephyr OS v1.14.0-rc1 *****
    Hello World! frdm_k64f
 
+Troubleshooting
+===============
+
+If pyocd raises an uncaught ``DAPAccessIntf.TransferFaultError()`` exception
+when you try to flash or debug, it's possible that the K64F flash may have been
+locked by a corrupt application. You can unlock it with the following sequence
+of pyocd commands:
+
+.. code-block:: console
+
+   $ pyocd cmd
+   0001915:WARNING:target_kinetis:Forcing halt on connect in order to gain control of device
+   Connected to K64F [Halted]: 0240000026334e450028400d5e0e000e4eb1000097969900
+   >>> unlock
+   0016178:WARNING:target_kinetis:K64F secure state: unlocked successfully
+   >>> reinit
+   0034584:WARNING:target_kinetis:Forcing halt on connect in order to gain control of device
+   >>> load build/zephyr/zephyr.bin
+   [====================] 100%
+   >>> reset
+   Resetting target
+   >>> quit
+
 .. _FRDM-K64F Website:
    https://www.nxp.com/support/developer-resources/evaluation-and-development-boards/freedom-development-boards/mcu-boards/freedom-development-platform-for-kinetis-k64-k63-and-k24-mcus:FRDM-K64F
 
@@ -323,7 +355,7 @@ should see the following message in the terminal:
    https://os.mbed.com/blog/entry/DAPLink-bootloader-update/
 
 .. _OpenSDA DAPLink FRDM-K64F Firmware:
-   https://www.nxp.com/assets/downloads/data/en/snippets-boot-code-headers-monitors/k20dx_frdmk64f_if_crc_legacy_0x5000.bin
+   https://www.nxp.com/downloads/en/snippets-boot-code-headers-monitors/k20dx_frdmk64f_if_crc_legacy_0x5000.bin
 
-.. _OpenSDA J-Link Generic Firmware for V3.2 Bootloader:
-   https://www.segger.com/downloads/jlink/OpenSDA_V3_2
+.. _OpenSDA Serial and Debug Adapter:
+   https://www.nxp.com/design/microcontrollers-developer-resources/ides-for-kinetis-mcus/opensda-serial-and-debug-adapter:OPENSDA#FRDM-K64F

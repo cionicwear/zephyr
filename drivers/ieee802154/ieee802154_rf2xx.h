@@ -103,20 +103,22 @@ struct rf2xx_config {
 struct rf2xx_context {
 	struct net_if *iface;
 
-	struct device *irq_gpio;
-	struct device *reset_gpio;
-	struct device *slptr_gpio;
-	struct device *dig2_gpio;
-	struct device *clkm_gpio;
+	const struct device *dev;
 
-	struct device *spi;
+	const struct device *irq_gpio;
+	const struct device *reset_gpio;
+	const struct device *slptr_gpio;
+	const struct device *dig2_gpio;
+	const struct device *clkm_gpio;
+
+	const struct device *spi;
 	struct spi_config spi_cfg;
 	struct spi_cs_control spi_cs;
 
 	struct gpio_callback irq_cb;
 
 	struct k_thread trx_thread;
-	K_THREAD_STACK_MEMBER(trx_stack,
+	K_KERNEL_STACK_MEMBER(trx_stack,
 			      CONFIG_IEEE802154_RF2XX_RX_STACK_SIZE);
 	struct k_sem trx_isr_lock;
 	struct k_sem trx_tx_sync;
@@ -124,6 +126,7 @@ struct rf2xx_context {
 	enum rf2xx_trx_model_t trx_model;
 	enum rf2xx_trx_state_trac_t trx_trac;
 
+	enum ieee802154_tx_mode tx_mode;
 	uint8_t mac_addr[8];
 	uint8_t pkt_lqi;
 	uint8_t pkt_ed;

@@ -14,17 +14,27 @@ extern void test_byteorder_memcpy_swap(void);
 extern void test_byteorder_mem_swap(void);
 extern void test_sys_get_be64(void);
 extern void test_sys_put_be64(void);
+extern void test_sys_get_be48(void);
+extern void test_sys_put_be48(void);
 extern void test_sys_get_be32(void);
 extern void test_sys_put_be32(void);
+extern void test_sys_get_be24(void);
+extern void test_sys_put_be24(void);
 extern void test_sys_get_be16(void);
 extern void test_sys_put_be16(void);
 extern void test_sys_get_le16(void);
 extern void test_sys_put_le16(void);
+extern void test_sys_get_le24(void);
+extern void test_sys_put_le24(void);
 extern void test_sys_get_le32(void);
 extern void test_sys_put_le32(void);
+extern void test_sys_get_le48(void);
+extern void test_sys_put_le48(void);
 extern void test_sys_get_le64(void);
 extern void test_sys_put_le64(void);
 extern void test_atomic(void);
+extern void test_threads_access_atomic(void);
+extern void test_errno(void);
 extern void test_printk(void);
 extern void test_timeout_order(void);
 extern void test_clock_cycle(void);
@@ -34,6 +44,12 @@ extern void test_multilib(void);
 extern void test_thread_context(void);
 extern void test_bootdelay(void);
 extern void test_irq_offload(void);
+extern void test_bitarray_declare(void);
+extern void test_bitarray_set_clear(void);
+extern void test_bitarray_alloc_free(void);
+extern void test_bitarray_region_set_clear(void);
+extern void test_nop(void);
+extern void test_ffs(void);
 
 /**
  * @defgroup kernel_common_tests Common Tests
@@ -97,8 +113,14 @@ static void test_bounds_check_mitigation(void)
 #endif
 }
 
+extern struct k_stack eno_stack;
+extern struct k_thread eno_thread;
+
 void test_main(void)
 {
+#if CONFIG_USERSPACE
+	k_thread_access_grant(k_current_get(), &eno_thread, &eno_stack);
+#endif
 	ztest_test_suite(common,
 			 ztest_unit_test(test_bootdelay),
 			 ztest_unit_test(test_irq_offload),
@@ -106,27 +128,43 @@ void test_main(void)
 			 ztest_unit_test(test_byteorder_mem_swap),
 			 ztest_unit_test(test_sys_get_be64),
 			 ztest_unit_test(test_sys_put_be64),
+			 ztest_unit_test(test_sys_get_be48),
+			 ztest_unit_test(test_sys_put_be48),
 			 ztest_unit_test(test_sys_get_be32),
 			 ztest_unit_test(test_sys_put_be32),
+			 ztest_unit_test(test_sys_get_be24),
+			 ztest_unit_test(test_sys_put_be24),
 			 ztest_unit_test(test_sys_get_be16),
 			 ztest_unit_test(test_sys_put_be16),
 			 ztest_unit_test(test_sys_get_le16),
 			 ztest_unit_test(test_sys_put_le16),
+			 ztest_unit_test(test_sys_get_le24),
+			 ztest_unit_test(test_sys_put_le24),
 			 ztest_unit_test(test_sys_get_le32),
 			 ztest_unit_test(test_sys_put_le32),
+			 ztest_unit_test(test_sys_get_le48),
+			 ztest_unit_test(test_sys_put_le48),
 			 ztest_unit_test(test_sys_get_le64),
 			 ztest_unit_test(test_sys_put_le64),
 			 ztest_user_unit_test(test_atomic),
+			 ztest_unit_test(test_threads_access_atomic),
 			 ztest_unit_test(test_bitfield),
+			 ztest_unit_test(test_bitarray_declare),
+			 ztest_unit_test(test_bitarray_set_clear),
+			 ztest_unit_test(test_bitarray_alloc_free),
+			 ztest_unit_test(test_bitarray_region_set_clear),
 			 ztest_unit_test(test_printk),
 			 ztest_1cpu_unit_test(test_timeout_order),
-			 ztest_1cpu_user_unit_test(test_clock_uptime),
+			 ztest_user_unit_test(test_clock_uptime),
 			 ztest_unit_test(test_clock_cycle),
 			 ztest_unit_test(test_version),
 			 ztest_unit_test(test_multilib),
 			 ztest_unit_test(test_thread_context),
+			 ztest_user_unit_test(test_errno),
 			 ztest_unit_test(test_ms_time_duration),
-			 ztest_unit_test(test_bounds_check_mitigation)
+			 ztest_unit_test(test_bounds_check_mitigation),
+			 ztest_unit_test(test_nop),
+			 ztest_unit_test(test_ffs)
 			 );
 
 	ztest_run_test_suite(common);

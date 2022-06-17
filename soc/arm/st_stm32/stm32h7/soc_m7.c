@@ -13,39 +13,30 @@
 #include <device.h>
 #include <init.h>
 #include <soc.h>
+#include <stm32_ll_bus.h>
+#include <stm32_ll_pwr.h>
+#include <stm32_ll_rcc.h>
+#include <stm32_ll_system.h>
 #include <arch/cpu.h>
 #include <arch/arm/aarch32/cortex_m/cmsis.h>
 #include "stm32_hsem.h"
 
 #if defined(CONFIG_STM32H7_DUAL_CORE)
-static int stm32h7_m4_wakeup(struct device *arg)
+static int stm32h7_m4_wakeup(const struct device *arg)
 {
 
-	/*HW semaphore Clock enable*/
+	/* HW semaphore and SysCfg Clock enable */
 	LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_HSEM);
+	LL_APB4_GRP1_EnableClock(LL_APB4_GRP1_PERIPH_SYSCFG);
 
-	if (IS_ENABLED(CONFIG_STM32H7_BOOT_CM4_CM7)) {
-		int timeout;
-
-		/*
-		 * When system initialization is finished, Cortex-M7 will
-		 * release Cortex-M4  by means of HSEM notification
+	if (READ_BIT(SYSCFG->UR1, SYSCFG_UR1_BCM4)) {
+		/* Cortex-M4 is waiting for end of system initialization made by
+		 * Cortex-M7. This initialization is now finished,
+		 * then Cortex-M7 takes HSEM so that CM4 can continue running.
 		 */
-
-		/*Take HSEM */
 		LL_HSEM_1StepLock(HSEM, CFG_HW_ENTRY_STOP_MODE_SEMID);
-		/*Release HSEM in order to notify the CPU2(CM4)*/
-		LL_HSEM_ReleaseLock(HSEM, CFG_HW_ENTRY_STOP_MODE_SEMID, 0);
-
-		/* wait until CPU2 wakes up from stop mode */
-		timeout = 0xFFFF;
-		while ((LL_RCC_D2CK_IsReady() == 0) && ((timeout--) > 0)) {
-		}
-		if (timeout < 0) {
-			return -EIO;
-		}
-	} else if (IS_ENABLED(CONFIG_STM32H7_BOOT_CM7_CM4GATED)) {
-		/* Start CM4 */
+	} else {
+		/* CM4 is not started at boot, start it now */
 		LL_RCC_ForceCM4Boot();
 	}
 
@@ -61,7 +52,7 @@ static int stm32h7_m4_wakeup(struct device *arg)
  *
  * @return 0
  */
-static int stm32h7_init(struct device *arg)
+static int stm32h7_init(const struct device *arg)
 {
 	uint32_t key;
 
@@ -71,10 +62,12 @@ static int stm32h7_init(struct device *arg)
 
 	SCB_EnableICache();
 
+#ifndef CONFIG_NOCACHE_MEMORY
 	if (!(SCB->CCR & SCB_CCR_DC_Msk)) {
 		SCB_EnableDCache();
 	}
 
+#endif /* CONFIG_NOCACHE_MEMORY */
 	/* Install default handler that simply resets the CPU
 	 * if configured in the kernel, NOP otherwise
 	 */

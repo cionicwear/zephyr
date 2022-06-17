@@ -21,7 +21,7 @@
  * @return 0 on success
  * @return negative error code from sensor API on failure
  */
-static int get_channels(struct device *dev, ...)
+static int get_channels(const struct device *dev, ...)
 {
 	va_list ptr;
 	int i;
@@ -38,10 +38,12 @@ static int get_channels(struct device *dev, ...)
 		val = va_arg(ptr, struct sensor_value *);
 		err = sensor_channel_get(dev, chan, val);
 		if (err < 0) {
+			va_end(ptr);
 			return err;
 		}
 	}
 
+	va_end(ptr);
 	return 0;
 }
 
@@ -51,7 +53,7 @@ static int cmd_battery(const struct shell *shell, size_t argc, char **argv)
 	struct sensor_value temp, volt, current, i_desired, charge_remain;
 	struct sensor_value charge, v_desired, v_design, cap, nom_cap;
 	struct sensor_value full, empty;
-	struct device *dev;
+	const struct device *dev;
 	bool allowed;
 	int err;
 

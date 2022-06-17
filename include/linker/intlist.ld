@@ -31,16 +31,16 @@
  * }
  */
 
-#ifndef LINKER_PASS2
+#ifndef LINKER_ZEPHYR_FINAL
 SECTION_PROLOGUE(.intList,,)
 {
-	KEEP(*(.irq_info))
-	KEEP(*(.intList))
-} GROUP_LINK_IN(IDT_LIST)
+	KEEP(*(.irq_info*))
+	KEEP(*(.intList*))
+} GROUP_ROM_LINK_IN(IDT_LIST, IDT_LIST)
 #else
 /DISCARD/ :
 {
-	KEEP(*(.irq_info))
-	KEEP(*(.intList))
+	KEEP(*(.irq_info*))
+	KEEP(*(.intList*))
 }
 #endif

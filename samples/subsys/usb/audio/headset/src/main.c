@@ -40,7 +40,7 @@ static void data_received(const struct device *dev,
 	}
 }
 
-static void feature_update(struct device *dev,
+static void feature_update(const struct device *dev,
 			   const struct usb_audio_fu_evt *evt)
 {
 	LOG_DBG("Control selector %d for channel %d updated",
@@ -59,7 +59,7 @@ static const struct usb_audio_ops ops = {
 
 void main(void)
 {
-	struct device *hs_dev;
+	const struct device *hs_dev;
 	int ret;
 
 	LOG_INF("Entered %s", __func__);
@@ -70,6 +70,8 @@ void main(void)
 		return;
 	}
 
+	LOG_INF("Found USB Headset Device");
+
 	usb_audio_register(hs_dev, &ops);
 
 	ret = usb_enable(NULL);
@@ -77,4 +79,6 @@ void main(void)
 		LOG_ERR("Failed to enable USB");
 		return;
 	}
+
+	LOG_INF("USB enabled");
 }

@@ -17,3 +17,7 @@ supported:
   - lsm303dlhc
   - nvs
   - can
+  - pwm
+  - adc
+  - dac
+  - dma

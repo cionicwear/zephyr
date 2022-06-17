@@ -31,7 +31,7 @@
  * @}
  */
 
-struct device *can_dev;
+const struct device *can_dev;
 
 const struct isotp_fc_opts fc_opts = {
 	.bs = 8,
@@ -61,7 +61,7 @@ void send_complette_cb(int error_nr, void *arg)
 	zassert_equal(error_nr, ISOTP_N_OK, "Sending failed (%d)", error_nr);
 }
 
-static void send_sf(struct device *can_dev)
+static void send_sf(const struct device *can_dev)
 {
 	int ret;
 
@@ -110,7 +110,8 @@ void print_hex(const uint8_t *ptr, size_t len)
 	}
 }
 
-static void send_test_data(struct device *can_dev, const uint8_t *data, size_t len)
+static void send_test_data(const struct device *can_dev, const uint8_t *data,
+			   size_t len)
 {
 	int ret;
 
@@ -422,7 +423,7 @@ void test_main(void)
 
 	can_dev = device_get_binding(CAN_DEVICE_NAME);
 	zassert_not_null(can_dev, "CAN device not not found");
-	ret = can_configure(can_dev, CAN_LOOPBACK_MODE, 0);
+	ret = can_set_mode(can_dev, CAN_LOOPBACK_MODE);
 	zassert_equal(ret, 0, "Configuring loopback mode failed (%d)", ret);
 
 	ztest_test_suite(isotp,

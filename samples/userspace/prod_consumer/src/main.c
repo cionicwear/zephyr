@@ -9,7 +9,6 @@
 #include <sys/printk.h>
 #include <app_memory/app_memdomain.h>
 #include <sys/libc-hooks.h>
-#include <sys/mempool.h>
 #include <logging/log.h>
 
 #include "main.h"
@@ -18,6 +17,7 @@
 #include "app_b.h"
 
 #define APP_A_STACKSIZE	2048
+#define APP_B_STACKSIZE	2048
 
 LOG_MODULE_REGISTER(app_main);
 
@@ -27,14 +27,13 @@ LOG_MODULE_REGISTER(app_main);
 K_APPMEM_PARTITION_DEFINE(shared_partition);
 
 /* Define a memory pool to place in the shared area.
- *
- * SYS_MEM_POOL_DEFINE() is special in that we don't use K_APP_DMEM()
- * to route it to the shared partition, instead it takes a section parameter.
  */
-#define BLK_SIZE (SAMPLE_DRIVER_MSG_SIZE + \
-		  WB_UP(sizeof(struct sys_mem_pool_block)))
-SYS_MEM_POOL_DEFINE(shared_pool, NULL, BLK_SIZE, BLK_SIZE, 8, 8,
-		    K_APP_DMEM_SECTION(shared_partition));
+#define BLK_SIZE (SAMPLE_DRIVER_MSG_SIZE + sizeof(void *))
+
+#define HEAP_BYTES (BLK_SIZE * 16)
+
+K_APP_DMEM(shared_partition) struct sys_heap shared_pool;
+K_APP_DMEM(shared_partition) uint8_t shared_pool_mem[HEAP_BYTES];
 
 /* queues for exchanging data between App A and App B */
 K_QUEUE_DEFINE(shared_queue_incoming);
@@ -47,8 +46,13 @@ K_QUEUE_DEFINE(shared_queue_outgoing);
 struct k_thread app_a_thread;
 K_THREAD_STACK_DEFINE(app_a_stack, APP_A_STACKSIZE);
 
+struct k_thread app_b_thread;
+K_THREAD_STACK_DEFINE(app_b_stack, APP_B_STACKSIZE);
+
 void main(void)
 {
+	k_tid_t thread_a, thread_b;
+
 	LOG_INF("APP A partition: %p %zu", (void *)app_a_partition.start,
 		(size_t)app_a_partition.size);
 	LOG_INF("Shared partition: %p %zu", (void *)shared_partition.start,
@@ -57,13 +61,18 @@ void main(void)
 	LOG_INF("libc partition: %p %zu", (void *)z_libc_partition.start,
 		(size_t)z_libc_partition.size);
 #endif
-	sys_mem_pool_init(&shared_pool);
+	sys_heap_init(&shared_pool, shared_pool_mem, HEAP_BYTES);
 
 	/* Spawn supervisor entry for application A */
-	k_thread_create(&app_a_thread, app_a_stack, APP_A_STACKSIZE,
-			app_a_entry, NULL, NULL, NULL,
-			-1, K_INHERIT_PERMS, K_NO_WAIT);
+	thread_a = k_thread_create(&app_a_thread, app_a_stack, APP_A_STACKSIZE,
+				   app_a_entry, NULL, NULL, NULL,
+				   -1, K_INHERIT_PERMS, K_NO_WAIT);
 
-	/* Re-use main for app B supervisor mode setup */
-	app_b_entry(NULL, NULL, NULL);
+	/* Spawn supervisor entry for application B */
+	thread_b = k_thread_create(&app_b_thread, app_b_stack, APP_A_STACKSIZE,
+				   app_b_entry, NULL, NULL, NULL,
+				   -1, K_INHERIT_PERMS, K_NO_WAIT);
+
+	k_thread_join(thread_a, K_FOREVER);
+	k_thread_join(thread_b, K_FOREVER);
 }
