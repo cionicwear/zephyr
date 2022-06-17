@@ -345,26 +345,7 @@ void bt_ctlr_assert_handle(char *file, uint32_t line)
 
 static void hci_log_send(uint8_t lvl, const char *msg)
 {
-	// static struct net_buf *buf;
 	uint32_t str_len = strlen(msg);
-	
-	// uart_irq_tx_disable(hci_uart_dev);
-	// buf = net_buf_get(&uart_tx_queue, K_NO_WAIT);
-
-	// if (!buf) {
-	// 	// discard message
-	// 	return;
-	// }
-
-	// buf->data[0] = H4_EVT;
-	// buf->data[1] = HCI_VENDOR_EVT;
-	// buf->data[2] = str_len + HCI_VENDOR_LOG_LVL_LEN + HCI_VENDOR_LOG_FTR_LEN;
-	// buf->data[3] = lvl;
-	// strcpy(buf->data + 4, msg);
-	// buf->len = str_len + HCI_VENDOR_LOG_LVL_LEN + HCI_VENDOR_LOG_LVL_LEN + 2;
-
-	// net_buf_put(&uart_tx_queue, buf);
-	// uart_irq_tx_enable(hci_uart_dev);
 
 	uart_poll_out(hci_uart_dev, H4_EVT);
 	uart_poll_out(hci_uart_dev, HCI_VENDOR_EVT);
