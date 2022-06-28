@@ -35,11 +35,24 @@ extern "C" {
 #define LOG_LEVEL CONFIG_BT_LOG_LEVEL
 #endif
 
+extern void hci_log(uint8_t lvl, const char *log, ...);
+
+#define LOG_WARN_LVL    0x02
+#define LOG_ERR_LVL     0x03
+
 LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL);
 
 #define BT_DBG(fmt, ...) LOG_DBG(fmt, ##__VA_ARGS__)
-#define BT_ERR(fmt, ...) LOG_ERR(fmt, ##__VA_ARGS__)
-#define BT_WARN(fmt, ...) LOG_WRN(fmt, ##__VA_ARGS__)
+
+#define BT_ERR(fmt, ...) { \
+	LOG_ERR(fmt, ##__VA_ARGS__); \
+	hci_log(LOG_ERR_LVL, fmt, ##__VA_ARGS__); \
+}
+
+#define BT_WARN(fmt, ...) {	\
+	LOG_WRN(fmt, ##__VA_ARGS__); \
+	hci_log(LOG_WARN_LVL, fmt, ##__VA_ARGS__); \
+}
 #define BT_INFO(fmt, ...) LOG_INF(fmt, ##__VA_ARGS__)
 
 #if defined(CONFIG_BT_ASSERT_VERBOSE)
