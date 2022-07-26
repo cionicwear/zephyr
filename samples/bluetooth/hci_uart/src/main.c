@@ -133,10 +133,7 @@ static void esf_dump(const z_arch_esf_t *esf)
 
 void k_sys_fatal_error_handler(unsigned int reason, const z_arch_esf_t *esf)
 {
-	// LOG_ERR("custom k_sys_fatal_error_handler = %d", reason);
-	// HCI_UART_WARN("custom k_sys_fatal_error_handler = %d", reason);
-	// (void)arch_irq_lock();
-	HCI_UART_WARN("BLE controller fault:");
+	HCI_UART_FATAL("BLE controller fault:");
 	esf_dump(esf);
 	sys_reboot(SYS_REBOOT_COLD);
 }
