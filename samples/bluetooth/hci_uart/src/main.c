@@ -13,6 +13,7 @@
 #include <zephyr.h>
 #include <arch/cpu.h>
 #include <sys/byteorder.h>
+#include <sys/reboot.h>
 #include <logging/log.h>
 #include <sys/util.h>
 
@@ -97,6 +98,47 @@ void hci_log(uint8_t lvl, const char *log, ...)
 #define HCI_UART_ERR(fmt, ...) { \
 	LOG_ERR(fmt, ##__VA_ARGS__); \
 	hci_log(LOG_ERR_LVL, fmt, ##__VA_ARGS__); \
+}
+
+#define HCI_UART_FATAL(fmt, ...) { \
+	LOG_ERR(fmt, ##__VA_ARGS__); \
+	hci_log(LOG_FATAL_LVL, fmt, ##__VA_ARGS__); \
+}
+
+static void esf_dump(const z_arch_esf_t *esf)
+{
+	HCI_UART_FATAL("r0/a1:  0x%08x  r1/a2:  0x%08x  r2/a3:  0x%08x",
+		esf->basic.a1, esf->basic.a2, esf->basic.a3);
+	HCI_UART_FATAL("r3/a4:  0x%08x r12/ip:  0x%08x r14/lr:  0x%08x",
+		esf->basic.a4, esf->basic.ip, esf->basic.lr);
+	HCI_UART_FATAL(" xpsr:  0x%08x", esf->basic.xpsr);
+#if defined(CONFIG_EXTRA_EXCEPTION_INFO)
+	const struct _callee_saved *callee = esf->extra_info.callee;
+
+	if (callee != NULL) {
+		HCI_UART_FATAL("r4/v1:  0x%08x  r5/v2:  0x%08x  r6/v3:  0x%08x",
+			callee->v1, callee->v2, callee->v3);
+		HCI_UART_FATAL("r7/v4:  0x%08x  r8/v5:  0x%08x  r9/v6:  0x%08x",
+			callee->v4, callee->v5, callee->v6);
+		HCI_UART_FATAL("r10/v7: 0x%08x  r11/v8: 0x%08x    psp:  0x%08x",
+			callee->v7, callee->v8, callee->psp);
+	}
+
+	HCI_UART_FATAL("EXC_RETURN: 0x%0x", esf->extra_info.exc_return);
+
+#endif /* CONFIG_EXTRA_EXCEPTION_INFO */
+	HCI_UART_FATAL("Faulting instruction address (r15/pc): 0x%08x",
+		esf->basic.pc);
+}
+
+void k_sys_fatal_error_handler(unsigned int reason, const z_arch_esf_t *esf)
+{
+	// LOG_ERR("custom k_sys_fatal_error_handler = %d", reason);
+	// HCI_UART_WARN("custom k_sys_fatal_error_handler = %d", reason);
+	// (void)arch_irq_lock();
+	HCI_UART_WARN("BLE controller fault:");
+	esf_dump(esf);
+	sys_reboot(SYS_REBOOT_COLD);
 }
 
 /* Length of a discard/flush buffer.
