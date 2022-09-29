@@ -156,8 +156,8 @@ void k_sys_fatal_error_handler(unsigned int reason, const z_arch_esf_t *esf)
 	coredump.magic = COREDUMP_MAGIC;
 	coredump.crash = true;
 	memcpy(&coredump.esf, esf, sizeof(z_arch_esf_t));
-	HCI_UART_FATAL("BLE controller fault:");
-	esf_dump(esf);
+	// HCI_UART_FATAL("BLE controller fault:");
+	// esf_dump(esf);
 	sys_reboot(SYS_REBOOT_COLD);
 }
 
@@ -168,7 +168,7 @@ static void task_wdt_handler(int channel_id, void *user_data)
 
 	snprintf(coredump.wdt_msg, COREDUMP_WDT_MSG_LEN, "BLE controller wdt (%d)", channel_id);
 
-	HCI_UART_FATAL("%s", coredump.wdt_msg);
+	// HCI_UART_FATAL("%s", coredump.wdt_msg);
 	sys_reboot(SYS_REBOOT_COLD);
 }
 
