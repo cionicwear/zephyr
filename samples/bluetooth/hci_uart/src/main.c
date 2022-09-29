@@ -28,14 +28,21 @@
 #include <bluetooth/buf.h>
 #include <bluetooth/hci_raw.h>
 
+#include <task_wdt/task_wdt.h>
+#include <drivers/watchdog.h>
+
 #define LOG_MODULE_NAME hci_uart
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
-#define COREDUMP_MAGIC	0x6e6f6944
+#define COREDUMP_MAGIC			0x6e6f6944
+#define COREDUMP_WDT_MSG_LEN	64
 
 typedef struct coredump_t{
 	uint32_t magic;
 	z_arch_esf_t esf;
+	char wdt_msg[COREDUMP_WDT_MSG_LEN];
+	bool wdt;
+	bool crash;
 }coredump_t;
 
 static coredump_t coredump __attribute__ ((section (".noinit")));
@@ -43,10 +50,13 @@ static const struct device *hci_uart_dev =
 	DEVICE_DT_GET(DT_CHOSEN(zephyr_bt_c2h_uart));
 static K_THREAD_STACK_DEFINE(tx_thread_stack, CONFIG_BT_HCI_TX_STACK_SIZE);
 static K_THREAD_STACK_DEFINE(cd_thread_stack, 768);
+static K_THREAD_STACK_DEFINE(wdt_thread_stack, 256);
 static struct k_thread tx_thread_data;
 static struct k_thread cd_thread_data;
+static struct k_thread wdt_thread_data;
 static struct k_mutex uart_mutex;
 static K_FIFO_DEFINE(tx_queue);
+#define WDT_NODE DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf_watchdog)
 
 /* RX in terms of bluetooth communication */
 static K_FIFO_DEFINE(uart_tx_queue);
@@ -144,9 +154,21 @@ static void esf_dump(const z_arch_esf_t *esf)
 void k_sys_fatal_error_handler(unsigned int reason, const z_arch_esf_t *esf)
 {
 	coredump.magic = COREDUMP_MAGIC;
+	coredump.crash = true;
 	memcpy(&coredump.esf, esf, sizeof(z_arch_esf_t));
 	HCI_UART_FATAL("BLE controller fault:");
 	esf_dump(esf);
+	sys_reboot(SYS_REBOOT_COLD);
+}
+
+static void task_wdt_handler(int channel_id, void *user_data)
+{
+	coredump.magic = COREDUMP_MAGIC;
+	coredump.wdt = true;
+
+	snprintf(coredump.wdt_msg, COREDUMP_WDT_MSG_LEN, "BLE controller wdt (%d)", channel_id);
+
+	HCI_UART_FATAL("%s", coredump.wdt_msg);
 	sys_reboot(SYS_REBOOT_COLD);
 }
 
@@ -368,35 +390,50 @@ static void tx_thread(void *p1, void *p2, void *p3)
 
 static void coredump_thread(void *p1, void *p2, void *p3)
 {
-	HCI_UART_WARN("BLE controller coredump:");
-	HCI_UART_WARN("r0/a1:  0x%08x  r1/a2:  0x%08x  r2/a3:  0x%08x",
-		coredump.esf.basic.a1, coredump.esf.basic.a2, coredump.esf.basic.a3);
-	HCI_UART_WARN("r3/a4:  0x%08x r12/ip:  0x%08x r14/lr:  0x%08x",
-		coredump.esf.basic.a4, coredump.esf.basic.ip, coredump.esf.basic.lr);
-	HCI_UART_WARN(" xpsr:  0x%08x", coredump.esf.basic.xpsr);
+	if(coredump.crash){
+		HCI_UART_WARN("BLE controller coredump:");
+		HCI_UART_WARN("r0/a1:  0x%08x  r1/a2:  0x%08x  r2/a3:  0x%08x",
+			coredump.esf.basic.a1, coredump.esf.basic.a2, coredump.esf.basic.a3);
+		HCI_UART_WARN("r3/a4:  0x%08x r12/ip:  0x%08x r14/lr:  0x%08x",
+			coredump.esf.basic.a4, coredump.esf.basic.ip, coredump.esf.basic.lr);
+		HCI_UART_WARN(" xpsr:  0x%08x", coredump.esf.basic.xpsr);
 #if defined(CONFIG_EXTRA_EXCEPTION_INFO)
-	const struct _callee_saved *callee = coredump.esf.extra_info.callee;
+		const struct _callee_saved *callee = coredump.esf.extra_info.callee;
 
-	if (callee != NULL) {
-		HCI_UART_WARN("r4/v1:  0x%08x  r5/v2:  0x%08x  r6/v3:  0x%08x",
-			callee->v1, callee->v2, callee->v3);
-		HCI_UART_WARN("r7/v4:  0x%08x  r8/v5:  0x%08x  r9/v6:  0x%08x",
-			callee->v4, callee->v5, callee->v6);
-		HCI_UART_WARN("r10/v7: 0x%08x  r11/v8: 0x%08x    psp:  0x%08x",
-			callee->v7, callee->v8, callee->psp);
-	}
+		if (callee != NULL) {
+			HCI_UART_WARN("r4/v1:  0x%08x  r5/v2:  0x%08x  r6/v3:  0x%08x",
+				callee->v1, callee->v2, callee->v3);
+			HCI_UART_WARN("r7/v4:  0x%08x  r8/v5:  0x%08x  r9/v6:  0x%08x",
+				callee->v4, callee->v5, callee->v6);
+			HCI_UART_WARN("r10/v7: 0x%08x  r11/v8: 0x%08x    psp:  0x%08x",
+				callee->v7, callee->v8, callee->psp);
+		}
 
-	HCI_UART_WARN("EXC_RETURN: 0x%0x", coredump.esf.extra_info.exc_return);
+		HCI_UART_WARN("EXC_RETURN: 0x%0x", coredump.esf.extra_info.exc_return);
 
 #endif /* CONFIG_EXTRA_EXCEPTION_INFO */
-	HCI_UART_WARN("Faulting instruction address (r15/pc): 0x%08x",
-		coredump.esf.basic.pc);
+		HCI_UART_WARN("Faulting instruction address (r15/pc): 0x%08x",
+			coredump.esf.basic.pc);
+	}
 
-	coredump.magic = 0;
+	if(coredump.wdt){
+		HCI_UART_WARN("%s", coredump.wdt_msg);
+	}
+
+	memset(&coredump, 0, sizeof(coredump_t));
 
 	return;
 }
 
+static void wdt_thread(void *p1, void *p2, void *p3)
+{
+	int tx_wdt_id = task_wdt_add(1000U, task_wdt_handler, (void *)k_current_get());
+
+	while (1) {
+		k_msleep(500);
+		task_wdt_feed(tx_wdt_id);
+	}
+}
 
 static int h4_send(struct net_buf *buf)
 {
@@ -470,11 +507,19 @@ void main(void)
 {
 	/* incoming events and data from the controller */
 	static K_FIFO_DEFINE(rx_queue);
+	const struct device *hw_wdt_dev = DEVICE_DT_GET(WDT_NODE);
 	int err;
 
 	LOG_DBG("Start");
 	__ASSERT(hci_uart_dev, "UART device is NULL");
 
+	if (!device_is_ready(hw_wdt_dev)) {
+		printk("Hardware watchdog %s is not ready; ignoring it.\n",
+		       hw_wdt_dev->name);
+		hw_wdt_dev = NULL;
+	}
+
+	task_wdt_init(hw_wdt_dev);
 	/* Enable the raw interface, this will in turn open the HCI driver */
 	bt_enable_raw(&rx_queue);
 
@@ -503,7 +548,7 @@ void main(void)
 				      *(((const uint8_t *)&cc_evt)+i));
 		}
 	}
-
+	
 	k_mutex_init(&uart_mutex);
 	/* Spawn the TX thread and start feeding commands and data to the
 	 * controller
@@ -512,12 +557,16 @@ void main(void)
 			K_THREAD_STACK_SIZEOF(tx_thread_stack), tx_thread,
 			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 
+	k_thread_create(&wdt_thread_data, wdt_thread_stack,
+			K_THREAD_STACK_SIZEOF(wdt_thread_stack), wdt_thread,
+			NULL, NULL, NULL, K_PRIO_PREEMPT(1), 0, K_NO_WAIT);
+
 	if(coredump.magic == COREDUMP_MAGIC){
 		k_thread_create(&cd_thread_data, cd_thread_stack,
 			K_THREAD_STACK_SIZEOF(cd_thread_stack), coredump_thread,
 			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_MSEC(4500));
 	}
-	
+
 	k_thread_name_set(&tx_thread_data, "HCI uart TX");
 
 	while (1) {
