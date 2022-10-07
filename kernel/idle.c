@@ -14,6 +14,15 @@
 #include <logging/log.h>
 #include <ksched.h>
 #include <kswap.h>
+#include <device.h>
+#include <devicetree.h>
+#include <drivers/gpio.h>
+
+#define LED1_NODE DT_ALIAS(led1)
+#define LED1	DT_GPIO_LABEL(LED1_NODE, gpios)
+#define PINIDLE	DT_GPIO_PIN(LED1_NODE, gpios)
+#define FLAGSIDLE	DT_GPIO_FLAGS(LED1_NODE, gpios)
+const struct device *gpio_idle;
 
 LOG_MODULE_DECLARE(os, CONFIG_KERNEL_LOG_LEVEL);
 
@@ -69,6 +78,15 @@ void idle(void *unused1, void *unused2, void *unused3)
 
 	__ASSERT_NO_MSG(_current->base.prio >= 0);
 
+	gpio_idle = device_get_binding(LED1);
+	if (gpio_idle == NULL) {
+		return;
+	}
+
+	if (gpio_pin_configure(gpio_idle, PINIDLE, GPIO_OUTPUT_ACTIVE | FLAGSIDLE) < 0) {
+		return;
+	}
+	// gpio_pin_set(gpio_idle, PINIDLE, 1);
 	while (true) {
 		/* SMP systems without a working IPI can't
 		 * actual enter an idle state, because they
@@ -92,11 +110,13 @@ void idle(void *unused1, void *unused2, void *unused3)
 		 */
 		(void) arch_irq_lock();
 
+		gpio_pin_set(gpio_idle, PINIDLE, 1);
 		if (IS_ENABLED(CONFIG_PM)) {
 			pm_save_idle();
 		} else {
 			k_cpu_idle();
 		}
+		gpio_pin_set(gpio_idle, PINIDLE, 0);
 
 #if !defined(CONFIG_PREEMPT_ENABLED)
 # if !defined(CONFIG_USE_SWITCH) || defined(CONFIG_SPARC)

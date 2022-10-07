@@ -556,6 +556,7 @@ static void tx_start(const struct device *dev, const uint8_t *buf, size_t len)
 	}
 
 	nrf_uarte_task_trigger(uarte, NRF_UARTE_TASK_STARTTX);
+	LOG_DBG("tx start len = %d", len);
 }
 
 #if defined(CONFIG_UART_ASYNC_API) || defined(CONFIG_PM_DEVICE)

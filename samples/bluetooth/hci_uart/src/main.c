@@ -20,6 +20,7 @@
 #include <device.h>
 #include <init.h>
 #include <drivers/uart.h>
+#include <drivers/gpio.h>
 
 #include <net/buf.h>
 #include <bluetooth/bluetooth.h>
@@ -41,6 +42,13 @@ typedef struct coredump_t{
 static coredump_t coredump __attribute__ ((section (".noinit")));
 static const struct device *hci_uart_dev =
 	DEVICE_DT_GET(DT_CHOSEN(zephyr_bt_c2h_uart));
+
+#define LED0_NODE DT_ALIAS(led0)
+#define LED0	DT_GPIO_LABEL(LED0_NODE, gpios)
+#define PIN	DT_GPIO_PIN(LED0_NODE, gpios)
+#define FLAGS	DT_GPIO_FLAGS(LED0_NODE, gpios)
+const struct device *gpio_isr;
+
 static K_THREAD_STACK_DEFINE(tx_thread_stack, CONFIG_BT_HCI_TX_STACK_SIZE);
 static K_THREAD_STACK_DEFINE(cd_thread_stack, 768);
 static struct k_thread tx_thread_data;
@@ -217,7 +225,7 @@ static void rx_isr(void)
 	int read;
 
 	hci_ready = true;
-
+	gpio_pin_set(gpio_isr, PIN, 1);
 	do {
 		switch (state) {
 		case ST_IDLE:
@@ -254,6 +262,7 @@ static void rx_isr(void)
 				if (!buf) {
 					HCI_UART_ERR("No available command buffers!");
 					state = ST_IDLE;
+					gpio_pin_set(gpio_isr, PIN, 0);
 					return;
 				}
 
@@ -302,6 +311,7 @@ static void rx_isr(void)
 
 		}
 	} while (read);
+	gpio_pin_set(gpio_isr, PIN, 0);
 }
 
 static void tx_isr(void)
@@ -312,12 +322,16 @@ static void tx_isr(void)
 	if (!buf) {
 		buf = net_buf_get(&uart_tx_queue, K_NO_WAIT);
 		if (!buf) {
+			LOG_DBG("disable TX irq");
 			uart_irq_tx_disable(hci_uart_dev);
 			return;
 		}
 	}
 
 	len = uart_fifo_fill(hci_uart_dev, buf->data, buf->len);
+	if(len == 0){
+		LOG_DBG("TX not ready");
+	}
 	net_buf_pull(buf, len);
 	if (!buf->len) {
 		net_buf_unref(buf);
@@ -351,18 +365,24 @@ static void tx_thread(void *p1, void *p2, void *p3)
 		int err;
 
 		/* Wait until a buffer is available */
-		buf = net_buf_get(&tx_queue, K_FOREVER);
-		/* Pass buffer to the stack */
-		err = bt_send(buf);
-		if (err) {
-			HCI_UART_ERR("Unable to send (err %d)", err);
-			net_buf_unref(buf);
+		buf = net_buf_get(&tx_queue, K_MSEC(5000));
+		if(buf){
+			/* Pass buffer to the stack */
+			err = bt_send(buf);
+			if (err) {
+				HCI_UART_ERR("Unable to send (err %d)", err);
+				net_buf_unref(buf);
+			}
+		}else{
+			LOG_DBG("TX thread alive");
 		}
-
+		
 		/* Give other threads a chance to run if tx_queue keeps getting
 		 * new data all the time.
 		 */
 		k_yield();
+		// k_msleep(1000);
+		// LOG_DBG("TX thread alive");
 	}
 }
 
@@ -475,6 +495,21 @@ void main(void)
 	LOG_DBG("Start");
 	__ASSERT(hci_uart_dev, "UART device is NULL");
 
+	gpio_isr = device_get_binding(LED0);
+	if (gpio_isr == NULL) {
+		return;
+	}
+
+	if (gpio_pin_configure(gpio_isr, PIN, GPIO_OUTPUT_ACTIVE | FLAGS) < 0) {
+		return;
+	}
+
+	// while(1){
+	// 	gpio_pin_set(gpio_isr, PIN, 1);
+	// 	k_msleep(1000);
+	// 	gpio_pin_set(gpio_isr, PIN, 0);
+	// 	k_msleep(1000);
+	// }
 	/* Enable the raw interface, this will in turn open the HCI driver */
 	bt_enable_raw(&rx_queue);
 
@@ -522,12 +557,16 @@ void main(void)
 
 	while (1) {
 		struct net_buf *buf;
-		buf = net_buf_get(&rx_queue, K_FOREVER);
-		k_mutex_lock(&uart_mutex, K_FOREVER);
-		err = h4_send(buf);
-		k_mutex_unlock(&uart_mutex);
-		if (err) {
-			HCI_UART_ERR("Failed to send");
+		buf = net_buf_get(&rx_queue, K_MSEC(5000));
+		if(buf){
+			k_mutex_lock(&uart_mutex, K_FOREVER);
+			err = h4_send(buf);
+			k_mutex_unlock(&uart_mutex);
+			if (err) {
+				HCI_UART_ERR("Failed to send");
+			}
+		}else{
+			LOG_DBG("main alive");
 		}
 	}
 }
