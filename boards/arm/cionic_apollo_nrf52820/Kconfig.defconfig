@@ -1,0 +1,14 @@
+# CIONIC APOLLO nRF52820 board configuration
+
+# Copyright (c) 2020 Nordic Semiconductor ASA
+# SPDX-License-Identifier: Apache-2.0
+
+if BOARD_CIONIC_APOLLO_NRF52820
+
+config BOARD
+	default "cionic_apollo_nrf52820"
+
+config BT_CTLR
+	default BT
+
+endif # BOARD_CIONIC_APOLLO_NRF52820

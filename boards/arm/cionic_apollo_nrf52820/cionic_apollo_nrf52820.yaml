@@ -1,0 +1,16 @@
+identifier: cionic_apollo_nrf52820
+name: CIONIC-APOLLO-NRF52820
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
+  - xtools
+ram: 32
+flash: 256
+supported:
+  - usb_device
+  - ble
+  - gpio
+  - watchdog
+  - counter
