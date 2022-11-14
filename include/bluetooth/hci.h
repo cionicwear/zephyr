@@ -533,6 +533,7 @@ struct bt_hci_cp_host_buffer_size {
 struct bt_hci_handle_count {
 	uint16_t handle;
 	uint16_t count;
+	uint32_t id;
 } __packed;
 
 #define BT_HCI_OP_HOST_NUM_COMPLETED_PACKETS    BT_OP(BT_OGF_BASEBAND, 0x0035)

@@ -153,8 +153,8 @@ void k_sys_fatal_error_handler(unsigned int reason, const z_arch_esf_t *esf)
 {
 	coredump.magic = COREDUMP_MAGIC;
 	memcpy(&coredump.esf, esf, sizeof(z_arch_esf_t));
-	HCI_UART_FATAL("BLE controller fault:");
-	esf_dump(esf);
+	// HCI_UART_FATAL("BLE controller fault:");
+	// esf_dump(esf);
 	sys_reboot(SYS_REBOOT_COLD);
 }
 
@@ -225,7 +225,7 @@ static void rx_isr(void)
 	int read;
 
 	hci_ready = true;
-	gpio_pin_set(gpio_isr, PIN, 1);
+	
 	do {
 		switch (state) {
 		case ST_IDLE:
@@ -262,7 +262,7 @@ static void rx_isr(void)
 				if (!buf) {
 					HCI_UART_ERR("No available command buffers!");
 					state = ST_IDLE;
-					gpio_pin_set(gpio_isr, PIN, 0);
+					// gpio_pin_set(gpio_isr, PIN, 0);
 					return;
 				}
 
@@ -311,14 +311,14 @@ static void rx_isr(void)
 
 		}
 	} while (read);
-	gpio_pin_set(gpio_isr, PIN, 0);
+	
 }
 
 static void tx_isr(void)
 {
 	static struct net_buf *buf;
 	int len;
-
+	
 	if (!buf) {
 		buf = net_buf_get(&uart_tx_queue, K_NO_WAIT);
 		if (!buf) {
@@ -328,10 +328,16 @@ static void tx_isr(void)
 		}
 	}
 
+	// if(buf->data[0] == 0x04 && buf->data[1] == 0x13){
+	// 	gpio_pin_set(gpio_isr, PIN, 0);
+	// }
 	len = uart_fifo_fill(hci_uart_dev, buf->data, buf->len);
 	if(len == 0){
 		LOG_DBG("TX not ready");
 	}
+	// if(buf->data[0] == 0x04 && buf->data[1] == 0x13){
+	// 	gpio_pin_set(gpio_isr, PIN, 1);
+	// }
 	net_buf_pull(buf, len);
 	if (!buf->len) {
 		net_buf_unref(buf);

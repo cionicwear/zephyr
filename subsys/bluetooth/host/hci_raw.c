@@ -175,6 +175,13 @@ struct net_buf *bt_buf_get_evt(uint8_t evt, bool discardable, k_timeout_t timeou
 	return bt_buf_get_rx(BT_BUF_EVT, timeout);
 }
 
+#include <devicetree.h>
+#include <drivers/gpio.h>
+#define LED1_NODE DT_ALIAS(led1)
+#define LED1	DT_GPIO_LABEL(LED1_NODE, gpios)
+#define PINTEST	DT_GPIO_PIN(LED1_NODE, gpios)
+#define FLAGSTEST	DT_GPIO_FLAGS(LED1_NODE, gpios)
+extern const struct device *gpio_test;
 int bt_recv(struct net_buf *buf)
 {
 	BT_DBG("buf %p len %u", buf, buf->len);
@@ -201,9 +208,16 @@ int bt_recv(struct net_buf *buf)
 			return -EINVAL;
 		}
 	}
-
+	
+	// if(buf->data[0] == 0x04 && buf->data[1] == 0x13){
+	// 	gpio_pin_set(gpio_test, PINTEST, 0);
+	// }
 	/* Queue to RAW rx queue */
 	net_buf_put(raw_rx, buf);
+
+	// if(buf->data[0] == 0x04 && buf->data[1] == 0x13){
+	// 	gpio_pin_set(gpio_test, PINTEST, 1);
+	// }
 
 	return 0;
 }

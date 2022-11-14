@@ -41,7 +41,7 @@ void hci_disconn_complete_process(uint16_t handle);
 #if defined(CONFIG_BT_CONN)
 int hci_acl_handle(struct net_buf *acl, struct net_buf **evt);
 void hci_acl_encode(struct node_rx_pdu *node_rx, struct net_buf *buf);
-void hci_num_cmplt_encode(struct net_buf *buf, uint16_t handle, uint8_t num);
+void hci_num_cmplt_encode(struct net_buf *buf, uint16_t handle, uint8_t num, uint32_t id);
 #endif
 #if defined(CONFIG_BT_CTLR_ISO)
 void hci_iso_encode(struct net_buf *buf, uint16_t handle, uint8_t flags);

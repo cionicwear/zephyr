@@ -78,14 +78,14 @@ void idle(void *unused1, void *unused2, void *unused3)
 
 	__ASSERT_NO_MSG(_current->base.prio >= 0);
 
-	gpio_idle = device_get_binding(LED1);
-	if (gpio_idle == NULL) {
-		return;
-	}
+	// gpio_idle = device_get_binding(LED1);
+	// if (gpio_idle == NULL) {
+	// 	return;
+	// }
 
-	if (gpio_pin_configure(gpio_idle, PINIDLE, GPIO_OUTPUT_ACTIVE | FLAGSIDLE) < 0) {
-		return;
-	}
+	// if (gpio_pin_configure(gpio_idle, PINIDLE, GPIO_OUTPUT_ACTIVE | FLAGSIDLE) < 0) {
+	// 	return;
+	// }
 	// gpio_pin_set(gpio_idle, PINIDLE, 1);
 	while (true) {
 		/* SMP systems without a working IPI can't
@@ -110,13 +110,13 @@ void idle(void *unused1, void *unused2, void *unused3)
 		 */
 		(void) arch_irq_lock();
 
-		gpio_pin_set(gpio_idle, PINIDLE, 1);
+		// gpio_pin_set(gpio_idle, PINIDLE, 1);
 		if (IS_ENABLED(CONFIG_PM)) {
 			pm_save_idle();
 		} else {
 			k_cpu_idle();
 		}
-		gpio_pin_set(gpio_idle, PINIDLE, 0);
+		// gpio_pin_set(gpio_idle, PINIDLE, 0);
 
 #if !defined(CONFIG_PREEMPT_ENABLED)
 # if !defined(CONFIG_USE_SWITCH) || defined(CONFIG_SPARC)

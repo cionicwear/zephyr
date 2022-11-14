@@ -4461,7 +4461,12 @@ static void data_buf_overflow(struct net_buf **buf)
 
 	ep->link_type = BT_OVERFLOW_LINK_ACL;
 }
-
+#include <drivers/gpio.h>
+#define LED0_NODE DT_ALIAS(led0)
+#define LED0	DT_GPIO_LABEL(LED0_NODE, gpios)
+#define PIN	DT_GPIO_PIN(LED0_NODE, gpios)
+#define FLAGS	DT_GPIO_FLAGS(LED0_NODE, gpios)
+extern const struct device *gpio_isr;
 int hci_acl_handle(struct net_buf *buf, struct net_buf **evt)
 {
 	struct node_tx *node_tx;
@@ -4525,7 +4530,7 @@ int hci_acl_handle(struct net_buf *buf, struct net_buf **evt)
 
 	pdu_data->len = len;
 	memcpy(&pdu_data->lldata[0], buf->data, len);
-
+	
 	if (ll_tx_mem_enqueue(handle, node_tx)) {
 		BT_ERR("Invalid Tx Enqueue");
 		ll_tx_mem_release(node_tx);
@@ -6558,7 +6563,7 @@ void hci_evt_encode(struct node_rx_pdu *node_rx, struct net_buf *buf)
 }
 
 #if defined(CONFIG_BT_CONN)
-void hci_num_cmplt_encode(struct net_buf *buf, uint16_t handle, uint8_t num)
+void hci_num_cmplt_encode(struct net_buf *buf, uint16_t handle, uint8_t num, uint32_t id)
 {
 	struct bt_hci_evt_num_completed_packets *ep;
 	struct bt_hci_handle_count *hc;
@@ -6575,6 +6580,7 @@ void hci_num_cmplt_encode(struct net_buf *buf, uint16_t handle, uint8_t num)
 	hc = &ep->h[0];
 	hc->handle = sys_cpu_to_le16(handle);
 	hc->count = sys_cpu_to_le16(num);
+	hc->id = sys_cpu_to_le32(id);
 }
 #endif /* CONFIG_BT_CONN */
 

@@ -55,7 +55,8 @@
 #include "ull_conn_iso_internal.h"
 
 #include "hci_internal.h"
-
+#include <devicetree.h>
+#include <drivers/gpio.h>
 #include "hal/debug.h"
 
 static K_SEM_DEFINE(sem_prio_recv, 0, K_SEM_MAX_LIMIT);
@@ -73,6 +74,12 @@ static struct k_poll_signal hbuf_signal =
 static sys_slist_t hbuf_pend;
 static int32_t hbuf_count;
 #endif
+
+#define LED1_NODE DT_ALIAS(led1)
+#define LED1	DT_GPIO_LABEL(LED1_NODE, gpios)
+#define PINTEST	DT_GPIO_PIN(LED1_NODE, gpios)
+#define FLAGSTEST	DT_GPIO_FLAGS(LED1_NODE, gpios)
+const struct device *gpio_test;
 
 #if defined(CONFIG_BT_CTLR_ISO)
 
@@ -159,6 +166,7 @@ isoal_status_t sink_sdu_write_hci(void *dbuf,
 }
 #endif
 
+
 static struct net_buf *process_prio_evt(struct node_rx_pdu *node_rx,
 					uint8_t *evt_flags)
 {
@@ -184,7 +192,18 @@ static struct net_buf *process_prio_evt(struct node_rx_pdu *node_rx,
 	*evt_flags = BT_HCI_EVT_FLAG_RECV;
 	return NULL;
 }
-
+#include <devicetree.h>
+#include <drivers/gpio.h>
+#define LED1_NODE DT_ALIAS(led1)
+#define LED1	DT_GPIO_LABEL(LED1_NODE, gpios)
+#define PINTEST	DT_GPIO_PIN(LED1_NODE, gpios)
+#define FLAGSTEST	DT_GPIO_FLAGS(LED1_NODE, gpios)
+extern const struct device *gpio_test;
+#define LED0_NODE DT_ALIAS(led0)
+#define LED0	DT_GPIO_LABEL(LED0_NODE, gpios)
+#define PIN	DT_GPIO_PIN(LED0_NODE, gpios)
+#define FLAGS	DT_GPIO_FLAGS(LED0_NODE, gpios)
+extern const struct device *gpio_isr;
 /**
  * @brief Handover from Controller thread to Host thread
  * @details Execution context: Controller thread
@@ -193,6 +212,9 @@ static struct net_buf *process_prio_evt(struct node_rx_pdu *node_rx,
  * @param p2  Unused. Required to conform with Zephyr thread protoype
  * @param p3  Unused. Required to conform with Zephyr thread protoype
  */
+static int total = 0;
+static int total_acl = 0;
+static uint32_t id = 0;
 static void prio_recv_thread(void *p1, void *p2, void *p3)
 {
 	while (1) {
@@ -204,12 +226,25 @@ static void prio_recv_thread(void *p1, void *p2, void *p3)
 		/* While there are completed rx nodes */
 		while ((num_cmplt = ll_rx_get((void *)&node_rx, &handle))) {
 #if defined(CONFIG_BT_CONN)
-
+			gpio_pin_set(gpio_isr, PIN, 0);
+		
 			buf = bt_buf_get_evt(BT_HCI_EVT_NUM_COMPLETED_PACKETS,
 					     false, K_FOREVER);
-			hci_num_cmplt_encode(buf, handle, num_cmplt);
-			BT_DBG("Num Complete: 0x%04x:%u", handle, num_cmplt);
+			// gpio_pin_set(gpio_test, PINTEST, 1);
+			hci_num_cmplt_encode(buf, handle, num_cmplt, id);
+			id++;
+			// gpio_pin_set(gpio_test, PINTEST, 0);
+			total += num_cmplt;
+			// LOG_WRN("Num Complete: 0x%04x:%u - tot = %d/%d", handle, num_cmplt, total, total_acl);
+			LOG_WRN("Acl - tot = %d/%d", total, total_acl);
+			// if(buf->data[0] == 0x04 && buf->data[1] == 0x13){
+				// gpio_pin_set(gpio_test, PINTEST, 0);
+			// }
 			bt_recv_prio(buf);
+			// if(buf->data[0] == 0x04 && buf->data[1] == 0x13){
+				// gpio_pin_set(gpio_test, PINTEST, 1);
+			// }
+			gpio_pin_set(gpio_isr, PIN, 1);
 			k_yield();
 #endif
 		}
@@ -258,14 +293,14 @@ static void prio_recv_thread(void *p1, void *p2, void *p3)
 
 		}
 
-		BT_DBG("sem take...");
+		// LOG_WRN("sem take...");
 		/* Wait until ULL mayfly has something to give us.
 		 * Blocking-take of the semaphore; we take it once ULL mayfly
 		 * has let it go in ll_rx_sched().
 		 */
-		k_sem_take(&sem_prio_recv, K_FOREVER);
+		k_sem_take(&sem_prio_recv, K_MSEC(2000));
 		/* Now, ULL mayfly has something to give to us */
-		BT_DBG("sem taken");
+		// LOG_WRN("sem taken");
 	}
 }
 
@@ -528,7 +563,6 @@ static void recv_thread(void *p1, void *p2, void *p3)
 				BT_DBG("Packet in: type:%u len:%u",
 					bt_buf_get_type(frag),
 					frag->len);
-
 				bt_recv(frag);
 			} else {
 				net_buf_unref(frag);
@@ -565,6 +599,7 @@ static int acl_handle(struct net_buf *buf)
 	struct net_buf *evt;
 	int err;
 
+	
 	err = hci_acl_handle(buf, &evt);
 	if (evt) {
 		BT_DBG("Replying with event of %u bytes", evt->len);
@@ -591,6 +626,8 @@ static int hci_driver_send(struct net_buf *buf)
 	switch (type) {
 #if defined(CONFIG_BT_CONN)
 	case BT_BUF_ACL_OUT:
+		total_acl++;
+		LOG_WRN("Acl - tot = %d/%d", total, total_acl);
 		err = acl_handle(buf);
 		break;
 #endif /* CONFIG_BT_CONN */
@@ -643,6 +680,14 @@ static int hci_driver_open(void)
 
 	BT_DBG("Success.");
 
+	gpio_test = device_get_binding(LED1);
+	if (gpio_test == NULL) {
+		return;
+	}
+
+	if (gpio_pin_configure(gpio_test, PINTEST, GPIO_OUTPUT_ACTIVE | FLAGSTEST) < 0) {
+		return;
+	}
 	return 0;
 }
 

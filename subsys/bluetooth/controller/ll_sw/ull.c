@@ -2253,6 +2253,14 @@ static void rx_demux_yield(void)
 }
 #endif /* CONFIG_BT_CTLR_LOW_LAT_ULL */
 
+#include <devicetree.h>
+#include <drivers/gpio.h>
+#define LED0_NODE DT_ALIAS(led0)
+#define LED0	DT_GPIO_LABEL(LED0_NODE, gpios)
+#define PIN	DT_GPIO_PIN(LED0_NODE, gpios)
+#define FLAGS	DT_GPIO_FLAGS(LED0_NODE, gpios)
+extern const struct device *gpio_isr;
+
 #if defined(CONFIG_BT_CONN)
 static uint8_t tx_cmplt_get(uint16_t *handle, uint8_t *first, uint8_t last)
 {
@@ -2282,8 +2290,11 @@ static uint8_t tx_cmplt_get(uint16_t *handle, uint8_t *first, uint8_t last)
 			tx->node = (void *)1;
 			cmplt++;
 		} else {
+			LOG_WRN("pdu id = %d", p->ll_id);
+			gpio_pin_set(gpio_isr, PIN, 0);
 			/* ctrl packet or flushed, hence dont count num cmplt */
 			tx->node = (void *)2;
+			gpio_pin_set(gpio_isr, PIN, 1);
 		}
 
 		if (((uint32_t)node_tx & ~3)) {

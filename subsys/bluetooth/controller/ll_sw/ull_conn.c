@@ -57,7 +57,12 @@
 #define LOG_MODULE_NAME bt_ctlr_ull_conn
 #include "common/log.h"
 #include "hal/debug.h"
-
+#include <drivers/gpio.h>
+#define LED0_NODE DT_ALIAS(led0)
+#define LED0	DT_GPIO_LABEL(LED0_NODE, gpios)
+#define PIN	DT_GPIO_PIN(LED0_NODE, gpios)
+#define FLAGS	DT_GPIO_FLAGS(LED0_NODE, gpios)
+extern const struct device *gpio_isr;
 /**
  *  User CPR Interval
  */
@@ -264,7 +269,12 @@ void ll_tx_mem_release(void *tx)
 {
 	mem_release(tx, &mem_conn_tx.free);
 }
-
+#include <drivers/gpio.h>
+#define LED0_NODE DT_ALIAS(led0)
+#define LED0	DT_GPIO_LABEL(LED0_NODE, gpios)
+#define PIN	DT_GPIO_PIN(LED0_NODE, gpios)
+#define FLAGS	DT_GPIO_FLAGS(LED0_NODE, gpios)
+extern const struct device *gpio_isr;
 int ll_tx_mem_enqueue(uint16_t handle, void *tx)
 {
 #if defined(CONFIG_BT_CTLR_THROUGHPUT)
@@ -309,7 +319,7 @@ int ll_tx_mem_enqueue(uint16_t handle, void *tx)
 #endif /* CONFIG_BT_CTLR_FORCE_MD_AUTO */
 
 		mfy.param = conn;
-
+		
 		mayfly_enqueue(TICKER_USER_ID_THREAD, TICKER_USER_ID_ULL_HIGH,
 			       0, &mfy);
 
@@ -317,6 +327,8 @@ int ll_tx_mem_enqueue(uint16_t handle, void *tx)
 	} else {
 		lll_conn_force_md_cnt_set(0U);
 #endif /* CONFIG_BT_CTLR_FORCE_MD_AUTO */
+		// gpio_pin_set(gpio_isr, PIN, 0);
+		// gpio_pin_set(gpio_isr, PIN, 1);
 	}
 
 	if (IS_ENABLED(CONFIG_BT_PERIPHERAL) && conn->lll.role) {
@@ -1410,6 +1422,7 @@ void ull_conn_done(struct node_rx_event_done *done)
 		if (conn->procedure_expire > elapsed_event) {
 			conn->procedure_expire -= elapsed_event;
 		} else {
+			LOG_WRN("Connection timeout");
 			conn_cleanup(conn, BT_HCI_ERR_LL_RESP_TIMEOUT);
 
 			return;
@@ -1842,6 +1855,7 @@ static void tx_demux(void *param)
 	ull_conn_tx_demux(1);
 
 	ull_conn_tx_lll_enqueue(param, 1);
+	
 }
 
 static struct node_tx *tx_ull_dequeue(struct ll_conn *conn, struct node_tx *tx)
@@ -1851,6 +1865,7 @@ static struct node_tx *tx_ull_dequeue(struct ll_conn *conn, struct node_tx *tx)
 		ctrl_tx_check_and_resume(conn);
 	}
 #endif /* CONFIG_BT_CTLR_LE_ENC */
+	// gpio_pin_set(gpio_isr, PIN, 0);
 
 	if (conn->tx_head == conn->tx_ctrl) {
 		conn->tx_head = conn->tx_head->next;
@@ -1872,6 +1887,7 @@ static struct node_tx *tx_ull_dequeue(struct ll_conn *conn, struct node_tx *tx)
 		/* point to NULL to indicate a Data PDU mem alloc */
 		tx->next = NULL;
 	}
+	// gpio_pin_set(gpio_isr, PIN, 1);
 
 	return tx;
 }

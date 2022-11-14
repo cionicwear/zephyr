@@ -25,7 +25,7 @@ static uint8_t _refcount;
 void cntr_init(void)
 {
 	NRF_RTC->PRESCALER = 0;
-	nrf_rtc_event_enable(NRF_RTC, RTC_EVTENSET_COMPARE0_Msk);
+	nrf_rtc_event_enable(NRF_RTC, RTC_EVTENSET_COMPARE0_Msk);  
 	nrf_rtc_int_enable(NRF_RTC, RTC_INTENSET_COMPARE0_Msk);
 }
 
@@ -34,7 +34,7 @@ uint32_t cntr_start(void)
 	if (_refcount++) {
 		return 1;
 	}
-
+	LOG_WRN("RTC started");
 	nrf_rtc_task_trigger(NRF_RTC, NRF_RTC_TASK_START);
 
 	return 0;
@@ -48,6 +48,7 @@ uint32_t cntr_stop(void)
 		return 1;
 	}
 
+	LOG_WRN("RTC stopped");
 	nrf_rtc_task_trigger(NRF_RTC, NRF_RTC_TASK_STOP);
 
 	return 0;
