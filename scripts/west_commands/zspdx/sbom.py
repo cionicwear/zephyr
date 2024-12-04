@@ -56,7 +56,7 @@ def setupCmakeQuery(build_dir):
         return True
     else:
         # file doesn't exist, let's create it
-        os.mknod(queryFilePath)
+        open(queryFilePath, 'a').close()
         return True
 
 # main entry point for SBOM maker
